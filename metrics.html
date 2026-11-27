@@ -3,23 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Mine Monitor - Metrics</title>
-  <link rel="stylesheet" href="style.css">
   <meta name="theme-color" content="#0f172a">
+  <title>Mine Monitor - Metrics</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header id="app-header"></header>
 <main>
+  <div class="toolbar">
+    <label class="datepick"><span data-t>As of date</span> <input type="date" id="viewDate"></label>
+    <button class="small alt" id="btnToday" data-t>Today</button>
+  </div>
   <div id="status"></div>
   <div class="kpis" id="kpis"></div>
+
+  <div class="section-title" data-sec="factory"><span data-t>Production</span></div>
   <div class="grid two">
-    <div class="card"><h2><span class="hic dark" data-ic="coal"></span>Coal - last 14 days (Tonnes)</h2><div class="chartbox"><canvas id="cCoal" role="img" aria-label="Daily coal production bar chart"></canvas></div></div>
-    <div class="card"><h2><span class="hic " data-ic="layers"></span>OB - last 14 days (cu.m)</h2><div class="chartbox"><canvas id="cOb" role="img" aria-label="Daily OB removal bar chart"></canvas></div></div>
-    <div class="card"><h2><span class="hic info" data-ic="pie"></span>Which shift produces more? (last 7 days, % share)</h2><div class="chartbox"><canvas id="cShift" role="img" aria-label="Shift share chart"></canvas></div></div>
-    <div class="card"><h2><span class="hic ok" data-ic="truck"></span>Fleet deployed today, by machine type</h2><div class="chartbox"><canvas id="cFleet" role="img" aria-label="Fleet deployment chart"></canvas></div></div>
-    <div class="card"><h2><span class="hic bad" data-ic="alert"></span>Hours lost by kind of hindrance</h2><div class="chartbox"><canvas id="cHind" role="img" aria-label="Hours lost chart"></canvas></div></div>
+    <div class="card"><h2><span class="hic dark" data-ic="coal"></span><span data-t>Coal - last 14 days (Tonnes)</span></h2><div class="chartbox"><canvas id="cCoal" role="img" aria-label="Daily coal production bar chart"></canvas></div></div>
+    <div class="card"><h2><span class="hic" data-ic="layers"></span><span data-t>OB - last 14 days (cu.m)</span></h2><div class="chartbox"><canvas id="cOb" role="img" aria-label="Daily OB removal bar chart"></canvas></div></div>
+    <div class="card"><h2><span class="hic dark" data-ic="calendar"></span><span data-t>Coal - month by month this year</span></h2><div class="chartbox"><canvas id="cCoalY" role="img" aria-label="Monthly coal production against target"></canvas></div></div>
+    <div class="card"><h2><span class="hic" data-ic="calendar"></span><span data-t>OB - month by month this year</span></h2><div class="chartbox"><canvas id="cObY" role="img" aria-label="Monthly OB removal against target"></canvas></div></div>
+    <div class="card"><h2><span class="hic info" data-ic="layers"></span><span data-t>Stripping ratio (OB cu.m per tonne of coal)</span></h2><div class="chartbox"><canvas id="cStrip" role="img" aria-label="Daily stripping ratio line chart"></canvas></div></div>
+    <div class="card"><h2><span class="hic info" data-ic="pie"></span><span data-t>Which shift produces more? (last 7 days, % share)</span></h2><div class="chartbox"><canvas id="cShift" role="img" aria-label="Shift share chart"></canvas></div></div>
   </div>
-  <p class="muted" id="stamp">Production is counted up to the end of the previous shift. Refreshes every 5 minutes.</p>
+
+  <div class="section-title" data-sec="truck"><span data-t>Fleet</span></div>
+  <div class="grid two">
+    <div class="card"><h2><span class="hic ok" data-ic="gauge"></span><span data-t>Availability and utilisation, last 7 days</span></h2><div class="chartbox"><canvas id="cAvail" role="img" aria-label="Availability and utilisation by machine type"></canvas></div></div>
+    <div class="card"><h2><span class="hic" data-ic="droplet"></span><span data-t>Diesel issued per day (litres)</span></h2><div class="chartbox"><canvas id="cDiesel" role="img" aria-label="Diesel per day bar chart"></canvas></div><div class="muted small" id="dieselNote"></div></div>
+    <div class="card"><h2><span class="hic ok" data-ic="truck"></span><span data-t>Fleet deployed on this day, by machine type</span></h2><div class="chartbox"><canvas id="cFleet" role="img" aria-label="Fleet deployment chart"></canvas></div></div>
+    <div class="card"><h2><span class="hic bad" data-ic="wrench"></span><span data-t>Breakdown report (last 90 days)</span></h2><div id="bdTable"></div></div>
+  </div>
+
+  <div class="section-title" data-sec="alert"><span data-t>Hindrances and faces</span></div>
+  <div class="grid two">
+    <div class="card"><h2><span class="hic bad" data-ic="alert"></span><span data-t>Hours lost per week, by kind (last 8 weeks)</span></h2><div class="chartbox"><canvas id="cHind" role="img" aria-label="Hours lost per week stacked bar chart"></canvas></div></div>
+    <div class="card"><h2><span class="hic dark" data-ic="pickaxe"></span><span data-t>Face history</span></h2><div id="faceTable"></div></div>
+  </div>
+  <p class="muted" id="stamp"></p>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -28,27 +52,37 @@
 <script src="i18n.js"></script>
 <script src="common.js"></script>
 <script>
-var T = MCL.TABLE, esc = MCL.esc, num = MCL.num;
+var T = MCL.TABLE, esc = MCL.esc, num = MCL.num, t = MCL.t;
 var $ = function (id) { return document.getElementById(id); };
+var VIEW = new URLSearchParams(location.search).get("date") || "";
 var db = null, charts = {};
-var COL = { Coal: "#374151", OB: "#b45309", target: "#047857", A: "#1d4ed8", B: "#b45309", C: "#6b7280" };
+var COL = { Coal: "#475569", OB: "#d97706", target: "#16a34a", A: "#2563eb", B: "#d97706", C: "#94a3b8" };
+var KIND_COL = ["#dc2626", "#d97706", "#2563eb", "#16a34a", "#7c3aed", "#0891b2", "#db2777", "#65a30d", "#64748b", "#475569"];
+var kpi = MCL.kpi;
 
-if (window.Chart && Chart.defaults && Chart.defaults.font) {
+Array.prototype.forEach.call(document.querySelectorAll("[data-ic]"), function (el) { el.innerHTML = MCL.icon(el.dataset.ic); });
+Array.prototype.forEach.call(document.querySelectorAll("[data-sec]"), function (el) { el.insertAdjacentHTML("afterbegin", MCL.icon(el.dataset.sec)); });
+MCL.translatePage();
+function chartTheme() {
+  if (!(window.Chart && Chart.defaults && Chart.defaults.font)) return;
+  var cs = getComputedStyle(document.documentElement);
   Chart.defaults.font.family = 'system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif';
-  Chart.defaults.color = "#64748b";
-  Chart.defaults.borderColor = "#eef0f3";
+  Chart.defaults.color = cs.getPropertyValue("--mute").trim() || "#64748b";
+  Chart.defaults.borderColor = cs.getPropertyValue("--line").trim() || "#eef0f3";
   Chart.defaults.plugins.legend.labels.usePointStyle = true;
   Chart.defaults.elements.bar.borderRadius = 6;
 }
+chartTheme();
 function mk(id, cfg) {
   if (charts[id]) charts[id].destroy();
   cfg.options = Object.assign({ responsive: true, maintainAspectRatio: false }, cfg.options || {});
   charts[id] = new Chart($(id), cfg);
 }
 function sumBy(rows, f) { return rows.reduce(function (a, r) { return a + (Number(r[f]) || 0); }, 0); }
-var kpi = MCL.kpi;
-Array.prototype.forEach.call(document.querySelectorAll("[data-ic]"), function (el) { el.innerHTML = MCL.icon(el.dataset.ic); });
 function latest(targets, p, m) { return targets.filter(function (r) { return r.category === p && r.title === m; })[0]; }
+function pct(a, b) { return b > 0 ? a / b * 100 : 0; }
+function lbl(d) { return d.slice(8) + "/" + d.slice(5, 7); }
+var MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 async function load() {
   if (!MCL.configReady()) {
@@ -56,76 +90,162 @@ async function load() {
     MCL.showMsg($("status"), "info", "The database settings in config.js are not filled in yet. Ask the Data Keeper to paste the Project URL and publishable key.");
     return;
   }
-  if (typeof Chart === "undefined") { MCL.showMsg($("status"), "err", "The chart library did not load. Check the internet connection and refresh."); }
+  if (typeof Chart === "undefined") MCL.showMsg($("status"), "err", "The chart library did not load. Check the internet connection and refresh.");
   db = db || window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_PUBLISHABLE_KEY);
   try {
     var setting = await MCL.loadSetting(db), now = MCL.renderHeader("metrics", setting);
-    var month = now.shiftDate.slice(0, 8) + "01", from14 = MCL.addDays(now.shiftDate, -13);
-    var since = month < from14 ? month : from14;
+    var D = VIEW || now.shiftDate, past = !!VIEW, curShift = past ? null : now.shift;
+    var fy = MCL.fyStart(D), month = D.slice(0, 8) + "01", d14 = MCL.addDays(D, -13), d90 = MCL.addDays(D, -90);
+    var since = fy < d14 ? fy : d14;
     var res = await Promise.all([
-      MCL.fetchAll(function () { return db.from(T).select("id,title,qty,shift,record_date").eq("record_type", "production").gte("record_date", since).order("id"); }),
-      MCL.fetchAll(function () { return db.from(T).select("id,record_type,category,title,qty,status,urgency,shift,record_date").in("record_type", ["target", "hindrance"]).order("created_at", { ascending: false }).order("id"); }),
-      MCL.fetchAll(function () { return db.from(T).select("id,record_type,category,qty,shift,status,record_date").eq("record_type", "deploy").eq("record_date", now.shiftDate).order("id"); }),
-      MCL.fetchAll(function () { return db.from(T).select("id,record_type,category,qty,status").in("record_type", ["face", "instruction", "breakdown"]).neq("status", "Resolved").order("id"); })
+      MCL.fetchAll(function () { return db.from(T).select("id,title,qty,shift,record_date").eq("record_type", "production").gte("record_date", since).lte("record_date", D).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("id,record_type,category,title,qty,created_at").eq("record_type", "target").order("created_at", { ascending: false }).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("id,record_type,category,title,location,qty,status,urgency,shift,record_date,created_at").in("record_type", ["hindrance", "breakdown"]).gte("created_at", d90 + "T00:00:00Z").order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("id,category,title,qty,qty2,shift,record_date").eq("record_type", "hemm").gte("record_date", d14).lte("record_date", D).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("id,title,location,qty,qty2,record_date").eq("record_type", "trip").gte("record_date", MCL.addDays(D, -29)).lte("record_date", D).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("id,record_type,category,title,location,qty,status,urgency,created_at").eq("record_type", "face").order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("id,record_type,category,title,qty,shift,record_date").eq("record_type", "deploy").eq("record_date", D).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("id,record_type,status").in("record_type", ["instruction", "safety", "asset"]).neq("status", "Resolved").order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("title,category,created_at").eq("record_type", "log").like("category", "Status:%").gte("created_at", d90 + "T00:00:00Z").order("id"); })
     ]);
     function pick(rows, type) { return rows.filter(function (r) { return r.record_type === type; }); }
-    var prod = res[0].filter(function (r) { return !(r.record_date === now.shiftDate && r.shift === now.shift); });
-    var targets = pick(res[1], "target"), hind = pick(res[1], "hindrance");
-    var deploys = res[2], faces = pick(res[3], "face").filter(function (r) { return r.status === "In progress"; });
-    var ins = pick(res[3], "instruction"), bd = pick(res[3], "breakdown");
+    var prod = res[0].filter(function (r) { return !(r.record_date === D && r.shift === curShift); });
+    var targets = res[1], hb = res[2], hemm = res[3], trips = res[4], misc = res[5].concat(res[6], res[7]), logs = res[8];
+    var hind = pick(hb, "hindrance"), bds = pick(hb, "breakdown");
+    var faces = pick(misc, "face"), deploys = pick(misc, "deploy"), ins = pick(misc, "instruction"), safety = pick(misc, "safety"), assets = pick(misc, "asset");
+    var logBy = {}; logs.forEach(function (l) { (logBy[l.title] = logBy[l.title] || []).push(l); });
+    function qf(m) { return function (n) { return MCL.fmtQty(n, m); }; }
 
-    // KPI tiles
+    // ---- availability / utilisation from the HEMM logbook (last 7 days) ----
+    var d7 = MCL.addDays(D, -6), bdH = {};
+    bds.forEach(function (r) { if (r.record_date) { var k = r.title + "|" + r.record_date + "|" + r.shift; bdH[k] = Math.max(bdH[k] || 0, Number(r.qty) || 0); } });
+    var types = {}, tot = { sched: 0, avail: 0, work: 0 };
+    hemm.filter(function (r) { return r.record_date >= d7; }).forEach(function (r) {
+      var k = r.category || "Other", x = types[k] = types[k] || { sched: 0, avail: 0, work: 0 };
+      var b = Math.min(8, bdH[r.title + "|" + r.record_date + "|" + r.shift] || 0), w = Math.min(8, Number(r.qty) || 0);
+      x.sched += 8; x.avail += 8 - b; x.work += w; tot.sched += 8; tot.avail += 8 - b; tot.work += w;
+    });
+    var dieselM = sumBy(hemm.filter(function (r) { return r.record_date >= month; }), "qty2");
+    var coalM = sumBy(prod.filter(function (r) { return r.title === "Coal" && r.record_date >= month; }), "qty");
+    var obM = sumBy(prod.filter(function (r) { return r.title === "OB" && r.record_date >= month; }), "qty");
+
+    // ---- KPI tiles ----
     var k = "";
     ["Coal", "OB"].forEach(function (m) {
-      var act = sumBy(prod.filter(function (r) { return r.title === m && r.record_date >= month; }), "qty");
-      var t = latest(targets, "Monthly", m);
-      k += kpi(m + " this month", t ? num(act / Number(t.qty) * 100, 1) + "%" : MCL.fmtQty(act, m), t ? MCL.fmtQty(act, m) + " of " + MCL.fmtQty(Number(t.qty), m) : "no monthly target set", "info", m === "Coal" ? "coal" : "layers");
+      var act = m === "Coal" ? coalM : obM, tg = latest(targets, "Monthly", m);
+      k += kpi(t(m) + " " + t("this month"), tg ? num(pct(act, Number(tg.qty)), 1) + "%" : qf(m)(act), tg ? qf(m)(act) + " " + t("of") + " " + qf(m)(Number(tg.qty)) : t("no monthly target set"), "info", m === "Coal" ? "coal" : "layers");
     });
-    var openH = hind.filter(function (r) { return r.status !== "Resolved"; });
-    k += kpi("Open hindrances", num(openH.length), num(sumBy(openH, "qty"), 1) + " hours lost so far", openH.length ? "warn" : "ok", "alert");
-    k += kpi("Machines in breakdown", num(bd.length), num(sumBy(bd, "qty"), 1) + " hours lost so far", bd.length ? "bad" : "ok", "wrench");
-    k += kpi("Active faces", num(faces.length), "", "info", "pickaxe");
-    k += kpi("Machines deployed today", num(sumBy(deploys, "qty")), "", "info", "truck");
-    k += kpi("Open instructions", num(ins.length), "", ins.length ? "warn" : "ok", "megaphone");
+    k += kpi(t("Stripping ratio this month"), coalM ? num(obM / coalM, 2) : "-", t("cu.m OB per tonne of coal"), "info", "layers");
+    k += kpi(t("Availability (7 days)"), tot.sched ? num(pct(tot.avail, tot.sched), 0) + "%" : "-", t("Utilisation") + " " + (tot.avail ? num(pct(tot.work, tot.avail), 0) + "%" : "-"), !tot.sched ? "info" : pct(tot.avail, tot.sched) >= 85 ? "ok" : "warn", "gauge");
+    k += kpi(t("Diesel this month"), num(dieselM) + " L", coalM ? num(dieselM / coalM, 2) + " " + t("L per tonne of coal") : t("no coal yet"), "info", "droplet");
+    var openH = hind.filter(function (r) { return r.status !== "Resolved"; }), openB = bds.filter(function (r) { return r.status !== "Resolved"; });
+    k += kpi(t("Open hindrances"), num(openH.length), num(sumBy(openH, "qty"), 1) + " " + t("hours lost so far"), openH.length ? "warn" : "ok", "alert");
+    k += kpi(t("Machines in breakdown"), num(openB.length), t("of") + " " + num(assets.length) + " " + t("in the Machine list"), openB.length ? "bad" : "ok", "wrench");
+    k += kpi(t("Active faces"), num(faces.filter(function (r) { return r.status === "In progress"; }).length), num(faces.filter(function (r) { return r.status === "Resolved"; }).length) + " " + t("closed"), "info", "pickaxe");
+    k += kpi(t("Machines deployed"), num(sumBy(deploys, "qty")), t("on") + " " + MCL.prettyDate(D), "info", "truck");
+    k += kpi(t("Open instructions"), num(ins.length), "", ins.length ? "warn" : "ok", "megaphone");
+    k += kpi(t("Safety observations open"), num(safety.length), "", safety.length ? "warn" : "ok", "shield");
     $("kpis").innerHTML = k;
+
+    // ---- tables (no chart library needed) ----
+    var bm = {};
+    bds.forEach(function (r) {
+      var x = bm[r.title] = bm[r.title] || { type: r.category, n: 0, hours: 0, rep: [], open: 0 };
+      x.n++; x.hours += Number(r.qty) || 0; if (r.status !== "Resolved") x.open++;
+      var fix = (logBy[r.id] || []).filter(function (l) { return l.category === "Status: Back in service"; })[0];
+      if (fix) x.rep.push((new Date(fix.created_at) - new Date(r.created_at)) / 3600000);
+    });
+    var bk = Object.keys(bm).sort(function (a, b) { return bm[b].n - bm[a].n || bm[b].hours - bm[a].hours; });
+    $("bdTable").innerHTML = bk.length ? '<div class="scroll"><table class="table"><tr><th>' + t("Machine") + "</th><th>" + t("Breakdowns") + "</th><th>" + t("Hours lost") + "</th><th>" + t("Avg repair time") + "</th></tr>" + bk.map(function (m) {
+      var x = bm[m], avg = x.rep.length ? x.rep.reduce(function (a, b) { return a + b; }, 0) / x.rep.length : null;
+      return "<tr><td><b>" + esc(m) + '</b><br><span class="muted small">' + esc(x.type || "") + "</span></td><td>" + x.n + (x.open ? ' <span class="badge High">' + x.open + " " + t("open") + "</span>" : "") + "</td><td>" + num(x.hours, 1) + " h</td><td>" + (avg == null ? "-" : num(avg, 1) + " h") + "</td></tr>"; }).join("") + "</table></div>"
+      : MCL.emptyState("check", t("No breakdowns in the last 90 days."));
+    var out = {}; trips.forEach(function (r) { var key = (r.location || "") + "|" + r.title; out[key] = (out[key] || 0) + (Number(r.qty) || 0) * (Number(r.qty2) || 0); });
+    var FST = { "Open": "Planned", "In progress": "Active", "Resolved": "Closed" };
+    var fs = faces.slice().sort(function (a, b) { return a.created_at < b.created_at ? 1 : -1; });
+    $("faceTable").innerHTML = fs.length ? '<div class="scroll"><table class="table"><tr><th>' + t("Face") + "</th><th>" + t("Status") + "</th><th>" + t("Opened") + "</th><th>" + t("Closed") + "</th><th>" + t("Output (30 days, trips)") + "</th></tr>" + fs.map(function (r) {
+      var lg = logBy[r.id] || [], act = lg.filter(function (l) { return l.category === "Status: Active"; })[0], cl = lg.filter(function (l) { return l.category === "Status: Closed"; }).pop();
+      return "<tr><td><b>" + esc(r.title) + '</b><br><span class="muted small">' + esc(r.category) + (r.location ? ", " + esc(r.location) : "") + '</span></td><td><span class="badge ' + (r.status === "In progress" ? "Low" : "") + '">' + esc(t(FST[r.status])) + "</span></td><td>" +
+        esc(MCL.timeText(act ? act.created_at : r.created_at)) + "</td><td>" + (r.status === "Resolved" && cl ? esc(MCL.timeText(cl.created_at)) : "-") + "</td><td>" + MCL.fmtQty(out[r.title + "|" + r.category] || 0, r.category) + "</td></tr>"; }).join("") + "</table></div>"
+      : MCL.emptyState("pickaxe", t("No faces entered."));
+
+    $("stamp").textContent = t("Updated") + " " + MCL.clockText() + ". " + (past ? t("Showing data up to") + " " + MCL.prettyDate(D) + "." : t("Production counts up to the end of the previous shift. Refreshes every 5 minutes."));
     if (typeof Chart === "undefined") return;
 
-    // Daily production for the last 14 days, with the daily target as a line
-    var days = []; for (var i = 13; i >= 0; i--) days.push(MCL.addDays(now.shiftDate, -i));
+    // ---- last 14 days, with the daily target line ----
+    var days = []; for (var i = 13; i >= 0; i--) days.push(MCL.addDays(D, -i));
+    var daySum = function (m, d) { return sumBy(prod.filter(function (r) { return r.title === m && r.record_date === d; }), "qty"); };
     [["Coal", "cCoal"], ["OB", "cOb"]].forEach(function (p) {
-      var m = p[0], t = latest(targets, "Daily", m), tv = t ? Number(t.qty) : null;
-      var ds = [{ type: "bar", label: "Actual", backgroundColor: COL[m],
-        data: days.map(function (d) { return sumBy(prod.filter(function (r) { return r.title === m && r.record_date === d; }), "qty"); }) }];
-      if (tv) ds.push({ type: "line", label: "Daily target", borderColor: COL.target, backgroundColor: COL.target, pointRadius: 0, borderDash: [6, 4], data: days.map(function () { return tv; }) });
-      mk(p[1], { data: { labels: days.map(function (d) { return d.slice(8) + "/" + d.slice(5, 7); }), datasets: ds }, options: { scales: { y: { beginAtZero: true, title: { display: true, text: MCL.UNITS[m].base } } } } });
+      var m = p[0], tg = latest(targets, "Daily", m), tv = tg ? Number(tg.qty) : null;
+      var ds = [{ type: "bar", label: t("Actual"), backgroundColor: COL[m], data: days.map(function (d) { return daySum(m, d); }) }];
+      if (tv) ds.push({ type: "line", label: t("Daily target"), borderColor: COL.target, backgroundColor: COL.target, pointRadius: 0, borderDash: [6, 4], data: days.map(function () { return tv; }) });
+      mk(p[1], { data: { labels: days.map(lbl), datasets: ds }, options: { scales: { y: { beginAtZero: true, title: { display: true, text: MCL.UNITS[m].base } } } } });
     });
 
-    // Share of production by shift, last 7 days
-    var d7 = MCL.addDays(now.shiftDate, -6);
+    // ---- month by month in this financial year ----
+    var mons = []; for (var j = 0; j < 12; j++) { var y = +fy.slice(0, 4), mo = 4 + j; if (mo > 12) { mo -= 12; y++; } mons.push(y + "-" + String(mo).padStart(2, "0")); }
+    [["Coal", "cCoalY"], ["OB", "cObY"]].forEach(function (p) {
+      var m = p[0], tg = latest(targets, "Monthly", m), tv = tg ? Number(tg.qty) : null;
+      var ds = [{ type: "bar", label: t("Actual"), backgroundColor: COL[m], data: mons.map(function (ym) { return sumBy(prod.filter(function (r) { return r.title === m && r.record_date.slice(0, 7) === ym && r.record_date >= fy; }), "qty"); }) }];
+      if (tv) ds.push({ type: "line", label: t("Monthly target"), borderColor: COL.target, backgroundColor: COL.target, pointRadius: 0, borderDash: [6, 4], data: mons.map(function () { return tv; }) });
+      mk(p[1], { data: { labels: mons.map(function (ym) { return MONTHS[+ym.slice(5) - 1]; }), datasets: ds }, options: { scales: { y: { beginAtZero: true, title: { display: true, text: MCL.UNITS[m].base } } } } });
+    });
+
+    // ---- stripping ratio ----
+    var sr = days.map(function (d) { var c = daySum("Coal", d); return c ? Math.round(daySum("OB", d) / c * 100) / 100 : null; });
+    mk("cStrip", { type: "line", data: { labels: days.map(lbl), datasets: [
+      { label: t("Daily ratio"), data: sr, borderColor: "#2563eb", backgroundColor: "rgba(37,99,235,.12)", fill: true, tension: .3, spanGaps: true },
+      { label: t("This month"), data: days.map(function () { return coalM ? Math.round(obM / coalM * 100) / 100 : null; }), borderColor: "#94a3b8", borderDash: [6, 4], pointRadius: 0 }] },
+      options: { scales: { y: { beginAtZero: true, title: { display: true, text: t("cu.m per tonne") } } } } });
+
+    // ---- shift share ----
     var share = ["Coal", "OB"].map(function (m) {
-      var rows = prod.filter(function (r) { return r.title === m && r.record_date >= d7; }), tot = sumBy(rows, "qty");
-      return { label: m, backgroundColor: COL[m], data: ["A", "B", "C"].map(function (s) { return tot ? Math.round(sumBy(rows.filter(function (r) { return r.shift === s; }), "qty") / tot * 1000) / 10 : 0; }) };
+      var rows = prod.filter(function (r) { return r.title === m && r.record_date >= d7; }), s = sumBy(rows, "qty");
+      return { label: t(m), backgroundColor: COL[m], data: ["A", "B", "C"].map(function (x) { return s ? Math.round(sumBy(rows.filter(function (r) { return r.shift === x; }), "qty") / s * 1000) / 10 : 0; }) };
     });
-    mk("cShift", { type: "bar", data: { labels: ["Shift A", "Shift B", "Shift C"], datasets: share }, options: { scales: { y: { beginAtZero: true, max: 100, title: { display: true, text: "% of production" } } } } });
+    mk("cShift", { type: "bar", data: { labels: ["A", "B", "C"].map(function (x) { return t("Shift") + " " + x; }), datasets: share }, options: { scales: { y: { beginAtZero: true, max: 100, title: { display: true, text: "%" } } } } });
 
-    // Fleet deployed today by machine type, stacked by shift
-    var types = Object.keys(deploys.reduce(function (a, r) { a[r.category || "Other"] = 1; return a; }, {}));
-    mk("cFleet", { type: "bar", data: { labels: types, datasets: ["A", "B", "C"].map(function (s) {
-      return { label: "Shift " + s, backgroundColor: COL[s], data: types.map(function (t) { return sumBy(deploys.filter(function (r) { return r.shift === s && (r.category || "Other") === t; }), "qty"); }) }; }) },
+    // ---- availability / utilisation by machine type ----
+    var tk = Object.keys(types);
+    mk("cAvail", { type: "bar", data: { labels: tk.map(t), datasets: [
+      { label: t("Availability") + " %", backgroundColor: "#16a34a", data: tk.map(function (x) { return Math.round(pct(types[x].avail, types[x].sched)); }) },
+      { label: t("Utilisation") + " %", backgroundColor: "#2563eb", data: tk.map(function (x) { return Math.round(pct(types[x].work, types[x].avail)); }) }] },
+      options: { scales: { y: { beginAtZero: true, max: 100 } } } });
+
+    // ---- diesel ----
+    var dz = days.map(function (d) { return sumBy(hemm.filter(function (r) { return r.record_date === d; }), "qty2"); });
+    mk("cDiesel", { type: "bar", data: { labels: days.map(lbl), datasets: [{ label: t("Litres"), backgroundColor: "#0891b2", data: dz }] }, options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } } });
+    var c14 = days.reduce(function (a, d) { return a + daySum("Coal", d); }, 0), z14 = dz.reduce(function (a, b) { return a + b; }, 0);
+    $("dieselNote").textContent = t("Last 14 days:") + " " + num(z14) + " L" + (c14 ? " = " + num(z14 / c14, 2) + " " + t("L per tonne of coal") : "") + ".";
+
+    // ---- fleet deployed by type ----
+    var ft = Object.keys(deploys.reduce(function (a, r) { a[r.category || "Other"] = 1; return a; }, {}));
+    mk("cFleet", { type: "bar", data: { labels: ft.map(t), datasets: ["A", "B", "C"].map(function (s) {
+      return { label: t("Shift") + " " + s, backgroundColor: COL[s], data: ft.map(function (x) { return sumBy(deploys.filter(function (r) { return r.shift === s && (r.category || "Other") === x; }), "qty"); }) }; }) },
       options: { scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } } } });
 
-    // Hours lost by kind
-    var kinds = {}; hind.forEach(function (r) { var c = r.category || "Other"; kinds[c] = (kinds[c] || 0) + (Number(r.qty) || 0); });
-    var kn = Object.keys(kinds).sort(function (a, b) { return kinds[b] - kinds[a]; });
-    mk("cHind", { type: "bar", data: { labels: kn, datasets: [{ label: "Hours lost", backgroundColor: "#b91c1c", data: kn.map(function (c) { return kinds[c]; }) }] },
-      options: { indexAxis: "y", plugins: { legend: { display: false } } } });
-    $("stamp").textContent = "Updated " + MCL.clockText() + ". Production counts up to the end of the previous shift. Refreshes every 5 minutes.";
-    if (!($("status").innerHTML.indexOf("did not load") > -1)) $("status").innerHTML = "";
+    // ---- hours lost per week by kind (hindrances + machine breakdowns) ----
+    var weeks = []; for (var w = 7; w >= 0; w--) weeks.push(MCL.addDays(D, -7 * w - 6));
+    var kinds = {};
+    hind.concat(bds.map(function (r) { return Object.assign({}, r, { category: "Machine breakdown" }); })).forEach(function (r) {
+      var d = MCL.zoneDate(r.created_at, now.tz), wi = -1;
+      for (var x = 0; x < weeks.length; x++) if (d >= weeks[x] && d <= MCL.addDays(weeks[x], 6)) wi = x;
+      if (wi < 0) return;
+      var c = r.category || "Other"; kinds[c] = kinds[c] || weeks.map(function () { return 0; }); kinds[c][wi] += Number(r.qty) || 0;
+    });
+    mk("cHind", { type: "bar", data: { labels: weeks.map(function (x) { return t("wk of") + " " + lbl(x); }), datasets: Object.keys(kinds).map(function (c, i) {
+      return { label: t(c), backgroundColor: KIND_COL[i % KIND_COL.length], data: kinds[c].map(function (v) { return Math.round(v * 10) / 10; }) }; }) },
+      options: { scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, title: { display: true, text: t("hours") } } } } });
+    if ($("status").innerHTML.indexOf("did not load") < 0) $("status").innerHTML = "";
   } catch (e) {
     MCL.showMsg($("status"), "err", "Could not load the metrics. Has 01-setup.sql been run?", e);
   }
 }
-MCL.autoRefresh(load, 300000);
+$("viewDate").value = VIEW;
+$("viewDate").onchange = function () { location.href = "metrics.html" + ($("viewDate").value ? "?date=" + $("viewDate").value : ""); };
+$("btnToday").onclick = function () { location.href = "metrics.html"; };
+window.addEventListener("mcl-theme", function () { chartTheme(); load(); });
+if (VIEW) load(); else MCL.autoRefresh(load, 300000);
 </script>
 </body>
 </html>
