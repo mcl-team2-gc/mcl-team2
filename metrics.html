@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mine Monitor - Metrics</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+    @media(min-width:700px){.kpis{grid-template-columns:repeat(3,1fr)}}
+    .kpi{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}
+    .kpi b{display:block;font-size:1.6rem;color:var(--brand-d)}
+    .chartbox{position:relative;height:260px}
+  </style>
+</head>
+<body>
+<header id="app-header"></header>
+<main>
+  <div id="status"></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="grid two">
+    <div class="card"><h2>Coal - last 14 days (tonnes)</h2><div class="chartbox"><canvas id="cCoal" role="img" aria-label="Daily coal production bar chart"></canvas></div></div>
+    <div class="card"><h2>OB - last 14 days (cu.m)</h2><div class="chartbox"><canvas id="cOb" role="img" aria-label="Daily OB removal bar chart"></canvas></div></div>
+    <div class="card"><h2>Which shift produces more? (last 7 days, % share)</h2><div class="chartbox"><canvas id="cShift" role="img" aria-label="Shift share chart"></canvas></div></div>
+    <div class="card"><h2>Fleet deployed today, by machine type</h2><div class="chartbox"><canvas id="cFleet" role="img" aria-label="Fleet deployment chart"></canvas></div></div>
+    <div class="card"><h2>Hours lost by kind of hindrance</h2><div class="chartbox"><canvas id="cHind" role="img" aria-label="Hours lost chart"></canvas></div></div>
+  </div>
+  <p class="muted">Production is counted up to the end of the previous shift. Refreshes every 5 minutes.</p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script>
+var T = MCL.TABLE, esc = MCL.esc, num = MCL.num;
+var $ = function (id) { return document.getElementById(id); };
+var db = null, charts = {};
+var COL = { Coal: "#374151", OB: "#b45309", target: "#047857", A: "#1d4ed8", B: "#b45309", C: "#6b7280" };
+
+function mk(id, cfg) {
+  if (charts[id]) charts[id].destroy();
+  cfg.options = Object.assign({ responsive: true, maintainAspectRatio: false }, cfg.options || {});
+  charts[id] = new Chart($(id), cfg);
+}
+function sumBy(rows, f) { return rows.reduce(function (a, r) { return a + (Number(r[f]) || 0); }, 0); }
+function kpi(label, value, sub) { return '<div class="kpi"><span class="muted">' + esc(label) + "</span><b>" + value + "</b>" + (sub ? '<span class="muted">' + sub + "</span>" : "") + "</div>"; }
+function latest(targets, p, m) { return targets.filter(function (r) { return r.category === p && r.title === m; })[0]; }
+
+async function load() {
+  if (!MCL.configReady()) {
+    MCL.renderHeader("metrics", null);
+    MCL.showMsg($("status"), "info", "The database settings in config.js are not filled in yet. Ask the Data Keeper to paste the Project URL and publishable key.");
+    return;
+  }
+  if (typeof Chart === "undefined") { MCL.showMsg($("status"), "err", "The chart library did not load. Check the internet connection and refresh."); }
+  db = db || window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_PUBLISHABLE_KEY);
+  try {
+    var setting = await MCL.loadSetting(db), now = MCL.renderHeader("metrics", setting);
+    var month = now.shiftDate.slice(0, 8) + "01", from14 = MCL.addDays(now.shiftDate, -13);
+    var since = month < from14 ? month : from14;
+    var q = function (type) { return db.from(T).select("*").eq("record_type", type); };
+    var res = await Promise.all([
+      MCL.fetchAll(function () { return q("production").gte("record_date", since).order("created_at").order("id"); }),
+      MCL.fetchAll(function () { return q("target").order("created_at", { ascending: false }).order("id"); }),
+      MCL.fetchAll(function () { return q("hindrance").order("created_at", { ascending: false }).order("id"); }),
+      MCL.fetchAll(function () { return q("deploy").eq("record_date", now.shiftDate).order("created_at").order("id"); }),
+      MCL.fetchAll(function () { return q("face").eq("status", "In progress").order("id"); }),
+      MCL.fetchAll(function () { return q("instruction").neq("status", "Resolved").order("id"); })
+    ]);
+    var prod = res[0].filter(function (r) { return !(r.record_date === now.shiftDate && r.shift === now.shift); });
+    var targets = res[1], hind = res[2], deploys = res[3], faces = res[4], ins = res[5];
+
+    // KPI tiles
+    var k = "";
+    ["Coal", "OB"].forEach(function (m) {
+      var act = sumBy(prod.filter(function (r) { return r.title === m && r.record_date >= month; }), "qty");
+      var t = latest(targets, "Monthly", m);
+      k += kpi(m + " this month", t ? num(act / Number(t.qty) * 100, 1) + "%" : num(act), t ? num(act) + " of " + num(Number(t.qty)) : "no monthly target set");
+    });
+    var openH = hind.filter(function (r) { return r.status !== "Resolved"; });
+    k += kpi("Open hindrances", num(openH.length), num(sumBy(openH, "qty"), 1) + " hours lost so far");
+    k += kpi("Active faces", num(faces.length));
+    k += kpi("Machines deployed today", num(sumBy(deploys, "qty")));
+    k += kpi("Open instructions", num(ins.length));
+    $("kpis").innerHTML = k;
+    if (typeof Chart === "undefined") return;
+
+    // Daily production for the last 14 days, with the daily target as a line
+    var days = []; for (var i = 13; i >= 0; i--) days.push(MCL.addDays(now.shiftDate, -i));
+    [["Coal", "cCoal"], ["OB", "cOb"]].forEach(function (p) {
+      var m = p[0], t = latest(targets, "Daily", m), tv = t ? Number(t.qty) : null;
+      var ds = [{ type: "bar", label: "Actual", backgroundColor: COL[m],
+        data: days.map(function (d) { return sumBy(prod.filter(function (r) { return r.title === m && r.record_date === d; }), "qty"); }) }];
+      if (tv) ds.push({ type: "line", label: "Daily target", borderColor: COL.target, backgroundColor: COL.target, pointRadius: 0, borderDash: [6, 4], data: days.map(function () { return tv; }) });
+      mk(p[1], { data: { labels: days.map(function (d) { return d.slice(8) + "/" + d.slice(5, 7); }), datasets: ds } });
+    });
+
+    // Share of production by shift, last 7 days
+    var d7 = MCL.addDays(now.shiftDate, -6);
+    var share = ["Coal", "OB"].map(function (m) {
+      var rows = prod.filter(function (r) { return r.title === m && r.record_date >= d7; }), tot = sumBy(rows, "qty");
+      return { label: m, backgroundColor: COL[m], data: ["A", "B", "C"].map(function (s) { return tot ? Math.round(sumBy(rows.filter(function (r) { return r.shift === s; }), "qty") / tot * 1000) / 10 : 0; }) };
+    });
+    mk("cShift", { type: "bar", data: { labels: ["Shift A", "Shift B", "Shift C"], datasets: share }, options: { scales: { y: { beginAtZero: true, max: 100, title: { display: true, text: "% of production" } } } } });
+
+    // Fleet deployed today by machine type, stacked by shift
+    var types = Object.keys(deploys.reduce(function (a, r) { a[r.category || "Other"] = 1; return a; }, {}));
+    mk("cFleet", { type: "bar", data: { labels: types, datasets: ["A", "B", "C"].map(function (s) {
+      return { label: "Shift " + s, backgroundColor: COL[s], data: types.map(function (t) { return sumBy(deploys.filter(function (r) { return r.shift === s && (r.category || "Other") === t; }), "qty"); }) }; }) },
+      options: { scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } } } });
+
+    // Hours lost by kind
+    var kinds = {}; hind.forEach(function (r) { var c = r.category || "Other"; kinds[c] = (kinds[c] || 0) + (Number(r.qty) || 0); });
+    var kn = Object.keys(kinds).sort(function (a, b) { return kinds[b] - kinds[a]; });
+    mk("cHind", { type: "bar", data: { labels: kn, datasets: [{ label: "Hours lost", backgroundColor: "#b91c1c", data: kn.map(function (c) { return kinds[c]; }) }] },
+      options: { indexAxis: "y", plugins: { legend: { display: false } } } });
+    if (!($("status").innerHTML.indexOf("did not load") > -1)) $("status").innerHTML = "";
+  } catch (e) {
+    MCL.showMsg($("status"), "err", "Could not load the metrics. Has 01-setup.sql been run?", e);
+  }
+}
+load(); setInterval(load, 300000);
+</script>
+</body>
+</html>

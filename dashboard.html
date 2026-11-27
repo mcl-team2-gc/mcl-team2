@@ -22,7 +22,7 @@ var T = MCL.TABLE, esc = MCL.esc, num = MCL.num;
 var $ = function (id) { return document.getElementById(id); };
 var db = null;
 var UNIT = { Coal: "tonnes", OB: "cu.m" };
-var FACE_ST = { "Open": "Planned", "In progress": "Working now" };
+var FACE_ST = { "Open": "Planned", "In progress": "Active" };
 var HIND_ST = { "Open": "Open", "In progress": "Being solved" };
 var INS_ST = { "Open": "New", "In progress": "Being acted on" };
 
@@ -65,9 +65,10 @@ async function load() {
       MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "face").neq("status", "Resolved").order("created_at", { ascending: false }).order("id"); }),
       MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "machine").eq("record_date", now.shiftDate).order("created_at", { ascending: false }).order("id"); }),
       MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "hindrance").neq("status", "Resolved").order("created_at", { ascending: false }).order("id"); }),
-      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "instruction").neq("status", "Resolved").order("created_at", { ascending: false }).order("id"); })
+      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "instruction").neq("status", "Resolved").order("created_at", { ascending: false }).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "deploy").eq("record_date", now.shiftDate).order("created_at", { ascending: false }).order("id"); })
     ]);
-    var prodAll = res[0], trips = res[1], targets = res[2], faces = res[3], machines = res[4], hind = res[5], ins = res[6];
+    var prodAll = res[0], trips = res[1], targets = res[2], faces = res[3], machines = res[4], hind = res[5], ins = res[6], deploys = res[7];
     // "till previous shift": leave out the shift that is running now
     var prod = prodAll.filter(function (r) { return !(r.record_date === now.shiftDate && r.shift === now.shift); });
 
@@ -117,16 +118,22 @@ async function load() {
     });
     h += "</div>";
 
-    // 4. Machines by shift
-    h += '<div class="card"><h2>Machines - ' + esc(MCL.prettyDate(now.shiftDate)) + '</h2><div class="scroll"><table class="table"><tr><th>Shift</th><th>Deployed</th></tr>';
+    // 4. Fleet deployed on each face, shift by shift
+    h += '<div class="card"><h2>Fleet deployment - ' + esc(MCL.prettyDate(now.shiftDate)) + '</h2><div class="scroll"><table class="table"><tr><th>Shift</th><th>Face: machines</th></tr>';
     ["A", "B", "C"].forEach(function (s) {
-      var l = machines.filter(function (r) { return r.shift === s && r.status === "In progress"; });
-      h += "<tr><td><b>" + s + (s === now.shift ? " (now)" : "") + "</b><br><span class='muted'>" + l.length + " machines</span></td><td>" +
-        (l.length ? l.map(function (r) { return esc(r.title) + " <span class='muted'>" + esc(r.category || "") + (r.location ? " @ " + esc(r.location) : "") + "</span>"; }).join("<br>") : "<span class='muted'>None entered</span>") + "</td></tr>";
+      var l = deploys.filter(function (r) { return r.shift === s; }), byFace = {}, total = 0;
+      l.forEach(function (r) { (byFace[r.title] = byFace[r.title] || []).push(num(r.qty) + " " + esc(r.category || "")); total += Number(r.qty) || 0; });
+      h += "<tr><td><b>" + s + (s === now.shift ? " (now)" : "") + "</b><br><span class='muted'>" + num(total) + " machines</span></td><td>" +
+        (l.length ? Object.keys(byFace).map(function (f) { return "<b>" + esc(f) + "</b>: " + byFace[f].join(", "); }).join("<br>") : "<span class='muted'>None entered</span>") + "</td></tr>";
     });
-    var av = machines.filter(function (r) { return r.status === "Open"; });
-    h += "</table></div><h3>Available (standby)</h3>" + (av.length ? av.map(function (r) {
-      return "<div>" + esc(r.title) + " <span class='muted'>" + esc(r.category || "") + " &middot; Shift " + esc(r.shift) + "</span></div>"; }).join("") : "<span class='muted'>None</span>") + "</div>";
+    h += "</table></div><h3>Machines available</h3>";
+    ["A", "B", "C"].forEach(function (s) {
+      var seen = {}, parts = [];
+      machines.filter(function (r) { return r.shift === s && r.status === "Open"; }).forEach(function (r) {   // newest entry per type wins
+        var k = r.category || r.title; if (seen[k]) return; seen[k] = 1; parts.push((r.qty == null ? 1 : num(r.qty)) + " " + esc(k)); });
+      h += "<div><b>Shift " + s + ":</b> " + (parts.length ? parts.join(", ") : "<span class='muted'>none entered</span>") + "</div>";
+    });
+    h += "</div>";
 
     // 5. Hindrances
     h += '<div class="card"><h2>Hindrances</h2>' + (hind.length ? hind.map(function (r) {

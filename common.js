@@ -55,6 +55,10 @@
 
   // ---- dates and shifts (A 06-14, B 14-22, C 22-06) ----
   function pad(n) { return String(n).padStart(2, "0"); }
+  MCL.DEFAULT_TZ = "Asia/Kolkata";
+  MCL.TZS = ["Asia/Kolkata", "Asia/Dhaka", "Asia/Kathmandu", "Asia/Colombo", "Asia/Dubai", "Asia/Singapore",
+             "Asia/Tokyo", "Australia/Sydney", "Africa/Johannesburg", "Europe/London", "Europe/Berlin",
+             "America/New_York", "America/Chicago", "America/Los_Angeles", "UTC"];
   MCL.addDays = function (ds, n) {
     var p = ds.split("-"), d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + n));
     return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate());
@@ -67,10 +71,28 @@
     var y = +ds.slice(0, 4), m = +ds.slice(5, 7);
     return (m >= 4 ? y : y - 1) + "-04-01";
   };
+  // Date and time as shown by the system clock in a chosen time zone.
+  MCL.zoneNow = function (tz) {
+    try {
+      var o = {};
+      new Intl.DateTimeFormat("en-GB", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+        .formatToParts(new Date()).forEach(function (p) { o[p.type] = p.value; });
+      return { date: o.year + "-" + o.month + "-" + o.day, time: o.hour + ":" + o.minute };
+    } catch (e) {
+      var d = new Date();
+      return { date: d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()),
+               time: pad(d.getHours()) + ":" + pad(d.getMinutes()) };
+    }
+  };
+  // Setting row: title = mine name, category = time zone, details = "system" or "manual",
+  // record_date / record_time = hand-set values (used only when "manual").
   MCL.mineNow = function (s) {
-    var d = new Date();
-    var dateStr = (s && s.record_date) || (d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()));
-    var timeStr = (s && s.record_time) ? s.record_time.slice(0, 5) : (pad(d.getHours()) + ":" + pad(d.getMinutes()));
+    var tz = (s && s.category) || MCL.DEFAULT_TZ;
+    var manual = s && (s.details ? s.details === "manual" : (s.record_date && s.record_time));
+    var sys = MCL.zoneNow(tz);
+    var dateStr = (manual && s.record_date) || sys.date;
+    var timeStr = (manual && s.record_time) ? s.record_time.slice(0, 5) : sys.time;
     var h = +timeStr.slice(0, 2), m = +timeStr.slice(3, 5);
     var shift, start;
     if (h >= 6 && h < 14) { shift = "A"; start = 6; }
@@ -79,22 +101,27 @@
     var el = h + m / 60 - start; if (el < 0) el += 24;
     return {
       name: (s && s.title) || "Mine name not set yet",
-      date: dateStr, time: timeStr, shift: shift, elapsed: Math.min(el, 8),
+      date: dateStr, time: timeStr, shift: shift, elapsed: Math.min(el, 8), tz: tz,
       shiftDate: h < 6 ? MCL.addDays(dateStr, -1) : dateStr,   // night shift after midnight belongs to previous day
-      live: !(s && s.record_date && s.record_time)
+      live: !manual
     };
   };
 
   // ---- same header + menu on every page ----
   MCL.renderHeader = function (active, setting) {
+    MCL._active = active; MCL._setting = setting;
     var n = MCL.mineNow(setting), host = document.getElementById("app-header");
     host.className = "top";
     host.innerHTML =
       "<h1>" + MCL.esc(n.name) + "</h1>" +
       '<div class="clock">' + MCL.esc(MCL.prettyDate(n.date)) + " &middot; " + MCL.esc(n.time) +
-      " &middot; Shift " + n.shift + (n.live ? "" : " (set by admin)") + "</div>" +
+      " &middot; Shift " + n.shift + '<br><small>' + MCL.esc(n.tz) + (n.live ? " &middot; system clock" : " &middot; set by hand") + "</small></div>" +
       '<nav class="menu"><a href="dashboard.html"' + (active === "dash" ? ' class="on"' : "") + ">Dashboard</a>" +
+      '<a href="metrics.html"' + (active === "metrics" ? ' class="on"' : "") + ">Metrics</a>" +
       '<a href="index.html"' + (active === "entry" ? ' class="on"' : "") + ">Data entry</a></nav>";
+    if (!MCL._tick) {   // keep the clock moving
+      MCL._tick = setInterval(function () { MCL.renderHeader(MCL._active, MCL._setting); }, 30000);
+    }
     return n;
   };
 })();

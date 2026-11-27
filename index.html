@@ -17,11 +17,12 @@
     <label for="role">Role</label>
     <select id="role">
       <option value="gm">General Manager</option>
+      <option value="po">Project Officer</option>
+      <option value="mm">Mine Manager</option>
+      <option value="pi">Production Incharge</option>
+      <option value="shift">Shift Incharge</option>
+      <option value="overman">Overman</option>
       <option value="admin">Admin</option>
-      <option value="planning">Planning officer</option>
-      <option value="shift">Shift in-charge</option>
-      <option value="production">Production / weighbridge</option>
-      <option value="management">Higher management</option>
     </select>
     <label for="code">Passcode</label>
     <input id="code" type="password" autocomplete="off">
@@ -43,36 +44,48 @@
 <script src="common.js"></script>
 <script>
 var T = MCL.TABLE, esc = MCL.esc;
-var ROLE_NAMES = { gm: "General Manager", admin: "Admin", planning: "Planning officer", shift: "Shift in-charge",
-                   production: "Production / weighbridge", management: "Higher management" };
+var ROLE_NAMES = { gm: "General Manager", po: "Project Officer", mm: "Mine Manager",
+                   pi: "Production Incharge", shift: "Shift Incharge", overman: "Overman", admin: "Admin" };
 var SHIFTS = [["A","A (6 am - 2 pm)"],["B","B (2 pm - 10 pm)"],["C","C (10 pm - 6 am)"]];
 var URG = [["Low","Low"],["Medium","Medium"],["High","High"]];
 var MAT = [["Coal","Coal"],["OB","OB (overburden)"]];
+var MTYPES = ["Shovel","Excavator","Dumper","Dozer","Drill","Pay loader","Surface miner","Water tanker","Other"].map(function (x) { return [x, x]; });
+var FOR_WHO = [["All","Everyone"]].concat(Object.keys(ROLE_NAMES).filter(function (k) { return k !== "admin"; }).map(function (k) { return [ROLE_NAMES[k], ROLE_NAMES[k]]; }));
 var STAT_LABELS = {
-  face:        { "Open": "Planned", "In progress": "Working now", "Resolved": "Closed" },
-  machine:     { "Open": "Available (standby)", "In progress": "Deployed", "Resolved": "Released" },
+  face:        { "Open": "Planned", "In progress": "Active", "Resolved": "Closed" },
   hindrance:   { "Open": "Open", "In progress": "Being solved", "Resolved": "Resolved" },
   instruction: { "Open": "New", "In progress": "Being acted on", "Resolved": "Done" }
 };
 function opts(map) { return Object.keys(map).map(function (k) { return [k, map[k]]; }); }
 
-// One module = one kind of record. "roles" says who may use it.
+// One module = one kind of record. "roles" says who may use it. Admin and General Manager see all modules.
 var MODULES = [
   { id: "setting", label: "Mine name, date, time", roles: ["admin"], hint:
-    "Leave Date and Time empty to show the live clock. Fill both to fix them (for example, report time).",
-    fields: [ { k: "title", l: "Mine name", t: "text", req: 1 }, { k: "record_date", l: "Date", t: "date" },
-              { k: "record_time", l: "Time", t: "time" } ],
-    line: function (r) { return r.title + " | " + (r.record_date || "live date") + " " + (r.record_time || "live time"); } },
+    "Choose the system clock (automatic, in the time zone you pick) or set date and time by hand. The Date and Time boxes below are used only for 'by hand'.",
+    fields: [ { k: "title", l: "Mine name", t: "text", req: 1 },
+              { k: "details", l: "Date and time source", t: "select", o: [["system","Use system clock (automatic)"],["manual","Set date and time by hand"]], d: "system" },
+              { k: "category", l: "Time zone", t: "select", o: MCL.TZS.map(function (z) { return [z, z]; }), d: MCL.DEFAULT_TZ },
+              { k: "record_date", l: "Date (by hand only)", t: "date" },
+              { k: "record_time", l: "Time (by hand only)", t: "time" } ],
+    line: function (r) { return r.title + " | " + (r.category || MCL.DEFAULT_TZ) + " | " + (r.details === "manual" ? "by hand " + (r.record_date || "") + " " + (r.record_time || "") : "system clock"); } },
 
-  { id: "target", label: "Targets", roles: ["admin", "planning"], hint:
+  { id: "target", label: "Targets", roles: ["po", "mm"], hint:
     "Newest entry for each Period + Material is used. Coal is in tonnes, OB in cubic metres.",
     fields: [ { k: "category", l: "Period", t: "select", o: [["Annual","Annual"],["Monthly","Monthly"],["Daily","Daily"]] },
               { k: "title", l: "Material", t: "select", o: MAT },
               { k: "qty", l: "Target quantity", t: "number", req: 1 } ],
     line: function (r) { return r.category + " " + r.title + " target: " + MCL.num(r.qty); } },
 
-  { id: "face", label: "Working faces", roles: ["admin", "planning"], hint:
-    "Status: Planned = not started, Working now = shown on dashboard as working, Closed = finished.",
+  { id: "instruction", label: "Instructions", roles: ["po", "mm"], hint:
+    "Instructions to your team. They show at the top of the dashboard until marked Done.",
+    fields: [ { k: "title", l: "Instruction", t: "text", req: 1 },
+              { k: "location", l: "For", t: "select", o: FOR_WHO },
+              { k: "urgency", l: "Urgency", t: "select", o: URG, d: "Medium" },
+              { k: "details", l: "More details", t: "textarea" } ],
+    flow: true, line: function (r) { return r.title + (r.location ? " (for " + r.location + ")" : "") + (r.entered_by ? " - by " + (ROLE_NAMES[r.entered_by] || r.entered_by) : ""); } },
+
+  { id: "face", label: "Working faces", roles: ["pi"], hint:
+    "Create a face, then set it Active to start production there. Set it Closed to stop. Shift Incharge can deploy machines only on Active faces.",
     fields: [ { k: "category", l: "Type", t: "select", o: MAT },
               { k: "title", l: "Face name / number", t: "text", req: 1 },
               { k: "location", l: "Location (panel / bench)", t: "text" },
@@ -81,17 +94,26 @@ var MODULES = [
               { k: "details", l: "Remarks", t: "textarea" } ],
     flow: true, line: function (r) { return r.category + " face " + r.title + (r.location ? " @ " + r.location : ""); } },
 
-  { id: "machine", label: "Machines & shifts", roles: ["admin", "shift"], hint:
-    "One row per machine per shift. Deployed = working this shift. Available = ready but not deployed.",
+  { id: "deploy", label: "Fleet deployment", roles: ["shift"], hint:
+    "Pick an Active face and say how many machines of one type are working there this shift. Add one entry for each machine type.",
+    fields: [ { k: "record_date", l: "Date (night shift after midnight = previous date)", t: "date", today: 1, req: 1 },
+              { k: "shift", l: "Shift", t: "select", o: SHIFTS },
+              { k: "title", l: "Active face", t: "select", dyn: "faces", req: 1 },
+              { k: "category", l: "Machine type", t: "select", o: MTYPES },
+              { k: "qty", l: "How many machines", t: "number", req: 1 },
+              { k: "details", l: "Remarks", t: "textarea" } ],
+    line: function (r) { return r.record_date + " Shift " + r.shift + ": " + r.qty + " x " + r.category + " @ " + r.title; } },
+
+  { id: "machine", label: "Fleet available", roles: ["shift"], hint:
+    "How many machines of each type are available (ready to work) in a shift. The newest entry for each shift and type is used.",
     fields: [ { k: "record_date", l: "Date", t: "date", today: 1, req: 1 },
               { k: "shift", l: "Shift", t: "select", o: SHIFTS },
-              { k: "title", l: "Machine ID", t: "text", req: 1 },
-              { k: "category", l: "Machine type", t: "select", o: ["Shovel","Excavator","Dumper","Dozer","Drill","Pay loader","Surface miner","Water tanker","Other"].map(function (x) { return [x, x]; }) },
-              { k: "location", l: "Deployed at (face / road)", t: "text" },
-              { k: "status", l: "Status", t: "select", o: opts(STAT_LABELS.machine), d: "In progress" } ],
-    flow: true, line: function (r) { return r.record_date + " Shift " + r.shift + ": " + r.title + " (" + r.category + ")" + (r.location ? " @ " + r.location : ""); } },
+              { k: "category", l: "Machine type", t: "select", o: MTYPES },
+              { k: "qty", l: "Number available", t: "number", req: 1 },
+              { k: "details", l: "Remarks", t: "textarea" } ],
+    line: function (r) { return r.record_date + " Shift " + r.shift + ": " + (r.qty == null ? 1 : r.qty) + " x " + (r.category || r.title) + " available"; } },
 
-  { id: "trip", label: "Trips (current shift)", roles: ["admin", "shift", "production"], hint:
+  { id: "trip", label: "Trips (current shift)", roles: ["shift", "overman"], hint:
     "Enter NEW trips counted since your last entry. The dashboard adds them up to estimate this shift.",
     fields: [ { k: "record_date", l: "Date (night shift after midnight = previous date)", t: "date", today: 1, req: 1 },
               { k: "shift", l: "Shift", t: "select", o: SHIFTS },
@@ -101,7 +123,7 @@ var MODULES = [
               { k: "location", l: "From face", t: "text" } ],
     line: function (r) { return r.record_date + " " + r.shift + ": " + r.title + " " + r.qty + " trips x " + r.qty2; } },
 
-  { id: "production", label: "Actual production", roles: ["admin", "production"], hint:
+  { id: "production", label: "Production status", roles: ["shift"], hint:
     "Enter the final figure of a COMPLETED shift only. One entry per shift per material. Coal in tonnes, OB in cu.m.",
     fields: [ { k: "record_date", l: "Date (night shift after midnight = previous date)", t: "date", today: 1, req: 1 },
               { k: "shift", l: "Shift", t: "select", o: SHIFTS },
@@ -109,7 +131,7 @@ var MODULES = [
               { k: "qty", l: "Actual production", t: "number", req: 1 } ],
     line: function (r) { return r.record_date + " Shift " + r.shift + ": " + r.title + " " + MCL.num(r.qty); } },
 
-  { id: "hindrance", label: "Hindrances", roles: ["admin", "planning", "shift"], hint:
+  { id: "hindrance", label: "Hindrances", roles: ["pi", "shift", "overman", "po", "mm"], hint:
     "Anything stopping or slowing production. Update the status when it is being solved or is solved.",
     fields: [ { k: "category", l: "Kind", t: "select", o: ["Machine breakdown","Blasting / drilling","Rain / weather","Land / R&R","Law and order","Power / diesel","Road / haul road","Manpower","Other"].map(function (x) { return [x, x]; }) },
               { k: "title", l: "Short title", t: "text", req: 1 },
@@ -118,16 +140,9 @@ var MODULES = [
               { k: "status", l: "Status", t: "select", o: opts(STAT_LABELS.hindrance) },
               { k: "qty", l: "Hours lost so far (optional)", t: "number" },
               { k: "details", l: "Details", t: "textarea" } ],
-    flow: true, line: function (r) { return r.category + ": " + r.title + (r.location ? " @ " + r.location : ""); } },
-
-  { id: "instruction", label: "Instructions", roles: ["admin", "management"], hint:
-    "These show at the top of the dashboard until marked Done.",
-    fields: [ { k: "title", l: "Instruction", t: "text", req: 1 },
-              { k: "location", l: "For (person / section)", t: "text" },
-              { k: "urgency", l: "Urgency", t: "select", o: URG, d: "Medium" },
-              { k: "details", l: "More details", t: "textarea" } ],
-    flow: true, line: function (r) { return r.title + (r.location ? " (for " + r.location + ")" : ""); } }
+    flow: true, line: function (r) { return r.category + ": " + r.title + (r.location ? " @ " + r.location : ""); } }
 ];
+var ALL_ROLES = ["admin", "gm"];   // these two see every module
 
 var db = null, role = null, cur = null;
 var $ = function (id) { return document.getElementById(id); };
@@ -170,7 +185,7 @@ $("logout").onclick = function () {
 function showApp() {
   $("app").hidden = false; $("login").hidden = true;
   $("who").textContent = "Signed in as: " + ROLE_NAMES[role];
-  var mine = MODULES.filter(function (m) { return (role === "admin" || role === "gm") ? true : m.roles.indexOf(role) > -1; });
+  var mine = MODULES.filter(function (m) { return ALL_ROLES.indexOf(role) > -1 ? true : m.roles.indexOf(role) > -1; });
   $("tabs").innerHTML = "";
   mine.forEach(function (m) {
     var b = document.createElement("button"); b.textContent = m.label; b.id = "tab-" + m.id;
@@ -179,13 +194,24 @@ function showApp() {
   openModule(mine[0]);
 }
 
-function openModule(m) {
+async function openModule(m) {
   cur = m;
+  for (var i = 0; i < m.fields.length; i++) {
+    if (m.fields[i].dyn === "faces") {
+      try {
+        var fr = await db.from(T).select("title,category,location").eq("record_type", "face").eq("status", "In progress").order("created_at", { ascending: false });
+        if (fr.error) throw fr.error;
+        m.fields[i].o = fr.data.map(function (x) { return [x.title, x.title + " (" + x.category + (x.location ? ", " + x.location : "") + ")"]; });
+      } catch (e) { m.fields[i].o = []; MCL.showMsg($("status"), "err", "Could not load the active faces.", e); }
+    }
+  }
   Array.prototype.forEach.call($("tabs").children, function (b) { b.className = b.id === "tab-" + m.id ? "on" : ""; });
   var h = '<div class="card"><h2>' + esc(m.label) + '</h2><p class="muted">' + esc(m.hint) + '</p><form id="f">';
   m.fields.forEach(function (f) {
     h += '<label for="f_' + f.k + '">' + esc(f.l) + (f.req ? " *" : "") + "</label>";
-    if (f.t === "select") {
+    if (f.t === "select" && !f.o.length) {
+      h += '<div class="msg info">No Active face yet. Ask the Production Incharge to set a face to Active.</div><select id="f_' + f.k + '"></select>';
+    } else if (f.t === "select") {
       h += '<select id="f_' + f.k + '">' + f.o.map(function (o) {
         return '<option value="' + esc(o[0]) + '"' + (o[0] === f.d ? " selected" : "") + ">" + esc(o[1]) + "</option>"; }).join("") + "</select>";
     } else if (f.t === "textarea") { h += '<textarea id="f_' + f.k + '"></textarea>'; }
