@@ -16,6 +16,7 @@
     <p class="muted">Pick your role and type your passcode. The Dashboard needs no passcode.</p>
     <label for="role">Role</label>
     <select id="role">
+      <option value="gm">General Manager</option>
       <option value="admin">Admin</option>
       <option value="planning">Planning officer</option>
       <option value="shift">Shift in-charge</option>
@@ -42,7 +43,7 @@
 <script src="common.js"></script>
 <script>
 var T = MCL.TABLE, esc = MCL.esc;
-var ROLE_NAMES = { admin: "Admin", planning: "Planning officer", shift: "Shift in-charge",
+var ROLE_NAMES = { gm: "General Manager", admin: "Admin", planning: "Planning officer", shift: "Shift in-charge",
                    production: "Production / weighbridge", management: "Higher management" };
 var SHIFTS = [["A","A (6 am - 2 pm)"],["B","B (2 pm - 10 pm)"],["C","C (10 pm - 6 am)"]];
 var URG = [["Low","Low"],["Medium","Medium"],["High","High"]];
@@ -169,7 +170,7 @@ $("logout").onclick = function () {
 function showApp() {
   $("app").hidden = false; $("login").hidden = true;
   $("who").textContent = "Signed in as: " + ROLE_NAMES[role];
-  var mine = MODULES.filter(function (m) { return role === "admin" ? true : m.roles.indexOf(role) > -1; });
+  var mine = MODULES.filter(function (m) { return (role === "admin" || role === "gm") ? true : m.roles.indexOf(role) > -1; });
   $("tabs").innerHTML = "";
   mine.forEach(function (m) {
     var b = document.createElement("button"); b.textContent = m.label; b.id = "tab-" + m.id;
