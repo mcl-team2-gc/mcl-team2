@@ -119,3 +119,53 @@ button.ghost{background:transparent;color:var(--mute);border:1px solid var(--lin
 .chartbox{position:relative;height:260px}
 .foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
 .foot button{width:auto;margin:0;min-height:40px}
+
+/* ---------- icons + graphics ---------- */
+.ic{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-3px}
+header.top{overflow:hidden}
+.hd-in{position:relative;z-index:1}
+.hd-art{position:absolute;right:-30px;bottom:44px;width:300px;height:120px;opacity:.1;pointer-events:none}
+@media(min-width:760px){.hd-art{right:10px;width:380px;height:150px;opacity:.22}}
+.chip .ic{width:14px;height:14px;color:#fbbf24}
+nav.menu a{display:flex;align-items:center;justify-content:center;gap:7px}
+nav.menu a .ic{width:17px;height:17px}
+@media(max-width:360px){nav.menu a .ic{display:none}}
+.hic{width:32px;height:32px;border-radius:10px;display:inline-grid;place-items:center;background:var(--brand-soft);color:var(--brand-d);flex:none}
+.hic .ic{width:17px;height:17px;vertical-align:0}
+.hic.ok{background:var(--ok-soft);color:var(--ok)} .hic.bad{background:var(--bad-soft);color:var(--bad)}
+.hic.info{background:var(--info-soft);color:var(--info)} .hic.dark{background:#e2e8f0;color:var(--ink)}
+.kpi{position:relative}
+.kic{position:absolute;top:12px;right:12px;width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--grey-soft);color:var(--mute)}
+.kic .ic{vertical-align:0}
+.kpi.ok .kic{background:var(--ok-soft);color:var(--ok)} .kpi.warn .kic{background:var(--warn-soft);color:var(--brand-d)}
+.kpi.bad .kic{background:var(--bad-soft);color:var(--bad)} .kpi.info .kic{background:var(--info-soft);color:var(--info)}
+.kpi .lbl{padding-right:38px}
+.empty{display:flex;align-items:center;gap:10px}
+.empty .ic{width:30px;height:30px;padding:6px;border-radius:50%;background:var(--grey-soft);color:#94a3b8}
+.section-title{display:flex;align-items:center;gap:8px}
+.section-title .ic{width:16px;height:16px;color:var(--brand)}
+.badge::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:5px;vertical-align:1px;opacity:.8}
+.tabs button{display:inline-flex;align-items:center;gap:7px}
+.tabs button .ic{width:16px;height:16px}
+button .ic{vertical-align:-3px;margin-right:6px}
+.userbar .avatar{background:linear-gradient(135deg,#fde68a,#fbbf24);color:#78350f}
+
+/* dashboard banner */
+.hero{position:relative;overflow:hidden;border-radius:20px;padding:18px 18px 16px;margin-bottom:16px;color:#fff;
+  background:radial-gradient(120% 140% at 100% 0%,#f59e0b 0%,#b45309 45%,#7c2d12 100%);box-shadow:0 10px 30px rgba(180,83,9,.3)}
+.hero .art{position:absolute;right:-24px;bottom:-8px;width:220px;height:88px;opacity:.3;pointer-events:none}
+@media(min-width:760px){.hero .art{width:420px;height:168px;opacity:.75}}
+.hero-in{position:relative;z-index:1;max-width:560px}
+.hero .eyebrow{font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;opacity:.85;font-weight:700}
+.hero h2{margin:4px 0 2px;font-size:1.5rem;line-height:1.2}
+.hero p{margin:0 0 10px;opacity:.92}
+.hero .bar{background:rgba(255,255,255,.25);max-width:340px}
+.hero .bar>i{background:#fff}
+.hero .pills{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.hero .pill{background:rgba(15,23,42,.28);border-radius:999px;padding:4px 11px;font-size:.82rem;display:inline-flex;align-items:center;gap:6px}
+.hero .pill .ic{width:14px;height:14px}
+
+/* login picture */
+.login-art{margin:-16px -18px 12px;border-radius:var(--radius) var(--radius) 0 0;overflow:hidden;background:linear-gradient(180deg,#e0f2fe,#fef3c7)}
+.login-art .art{display:block;width:100%;height:150px}
+.login h2{display:flex;align-items:center;gap:8px}

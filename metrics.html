@@ -13,11 +13,11 @@
   <div id="status"></div>
   <div class="kpis" id="kpis"></div>
   <div class="grid two">
-    <div class="card"><h2>Coal - last 14 days (Tonnes)</h2><div class="chartbox"><canvas id="cCoal" role="img" aria-label="Daily coal production bar chart"></canvas></div></div>
-    <div class="card"><h2>OB - last 14 days (cu.m)</h2><div class="chartbox"><canvas id="cOb" role="img" aria-label="Daily OB removal bar chart"></canvas></div></div>
-    <div class="card"><h2>Which shift produces more? (last 7 days, % share)</h2><div class="chartbox"><canvas id="cShift" role="img" aria-label="Shift share chart"></canvas></div></div>
-    <div class="card"><h2>Fleet deployed today, by machine type</h2><div class="chartbox"><canvas id="cFleet" role="img" aria-label="Fleet deployment chart"></canvas></div></div>
-    <div class="card"><h2>Hours lost by kind of hindrance</h2><div class="chartbox"><canvas id="cHind" role="img" aria-label="Hours lost chart"></canvas></div></div>
+    <div class="card"><h2><span class="hic dark" data-ic="coal"></span>Coal - last 14 days (Tonnes)</h2><div class="chartbox"><canvas id="cCoal" role="img" aria-label="Daily coal production bar chart"></canvas></div></div>
+    <div class="card"><h2><span class="hic " data-ic="layers"></span>OB - last 14 days (cu.m)</h2><div class="chartbox"><canvas id="cOb" role="img" aria-label="Daily OB removal bar chart"></canvas></div></div>
+    <div class="card"><h2><span class="hic info" data-ic="pie"></span>Which shift produces more? (last 7 days, % share)</h2><div class="chartbox"><canvas id="cShift" role="img" aria-label="Shift share chart"></canvas></div></div>
+    <div class="card"><h2><span class="hic ok" data-ic="truck"></span>Fleet deployed today, by machine type</h2><div class="chartbox"><canvas id="cFleet" role="img" aria-label="Fleet deployment chart"></canvas></div></div>
+    <div class="card"><h2><span class="hic bad" data-ic="alert"></span>Hours lost by kind of hindrance</h2><div class="chartbox"><canvas id="cHind" role="img" aria-label="Hours lost chart"></canvas></div></div>
   </div>
   <p class="muted" id="stamp">Production is counted up to the end of the previous shift. Refreshes every 5 minutes.</p>
 </main>
@@ -46,6 +46,7 @@ function mk(id, cfg) {
 }
 function sumBy(rows, f) { return rows.reduce(function (a, r) { return a + (Number(r[f]) || 0); }, 0); }
 var kpi = MCL.kpi;
+Array.prototype.forEach.call(document.querySelectorAll("[data-ic]"), function (el) { el.innerHTML = MCL.icon(el.dataset.ic); });
 function latest(targets, p, m) { return targets.filter(function (r) { return r.category === p && r.title === m; })[0]; }
 
 async function load() {
@@ -77,14 +78,14 @@ async function load() {
     ["Coal", "OB"].forEach(function (m) {
       var act = sumBy(prod.filter(function (r) { return r.title === m && r.record_date >= month; }), "qty");
       var t = latest(targets, "Monthly", m);
-      k += kpi(m + " this month", t ? num(act / Number(t.qty) * 100, 1) + "%" : MCL.fmtQty(act, m), t ? MCL.fmtQty(act, m) + " of " + MCL.fmtQty(Number(t.qty), m) : "no monthly target set", "info");
+      k += kpi(m + " this month", t ? num(act / Number(t.qty) * 100, 1) + "%" : MCL.fmtQty(act, m), t ? MCL.fmtQty(act, m) + " of " + MCL.fmtQty(Number(t.qty), m) : "no monthly target set", "info", m === "Coal" ? "coal" : "layers");
     });
     var openH = hind.filter(function (r) { return r.status !== "Resolved"; });
-    k += kpi("Open hindrances", num(openH.length), num(sumBy(openH, "qty"), 1) + " hours lost so far", openH.length ? "warn" : "ok");
-    k += kpi("Machines in breakdown", num(bd.length), num(sumBy(bd, "qty"), 1) + " hours lost so far", bd.length ? "bad" : "ok");
-    k += kpi("Active faces", num(faces.length), "", "info");
-    k += kpi("Machines deployed today", num(sumBy(deploys, "qty")), "", "info");
-    k += kpi("Open instructions", num(ins.length), "", ins.length ? "warn" : "ok");
+    k += kpi("Open hindrances", num(openH.length), num(sumBy(openH, "qty"), 1) + " hours lost so far", openH.length ? "warn" : "ok", "alert");
+    k += kpi("Machines in breakdown", num(bd.length), num(sumBy(bd, "qty"), 1) + " hours lost so far", bd.length ? "bad" : "ok", "wrench");
+    k += kpi("Active faces", num(faces.length), "", "info", "pickaxe");
+    k += kpi("Machines deployed today", num(sumBy(deploys, "qty")), "", "info", "truck");
+    k += kpi("Open instructions", num(ins.length), "", ins.length ? "warn" : "ok", "megaphone");
     $("kpis").innerHTML = k;
     if (typeof Chart === "undefined") return;
 

@@ -12,7 +12,7 @@
 <main>
   <div id="status"></div>
   <div id="board"><div class="card"><span class="muted">Loading the dashboard...</span></div></div>
-  <div class="foot"><span class="muted" id="stamp"></span><button class="ghost" id="refresh">Refresh now</button></div>
+  <div class="foot"><span class="muted" id="stamp"></span><button class="ghost" id="refresh"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>Refresh now</button></div>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -33,7 +33,8 @@ function badge(u) { return '<span class="badge ' + esc(u) + '">' + esc(u) + "</s
 function stBadge(t) { return '<span class="badge st">' + esc(t) + "</span>"; }
 function bar(p, est) { return '<div class="bar' + (est ? " est" : "") + '"><i style="width:' + Math.max(0, Math.min(100, p)) + '%"></i></div>'; }
 function pct(a, t) { return t > 0 ? a / t * 100 : 0; }
-function empty(t) { return '<div class="empty">' + t + "</div>"; }
+function empty(t, ic) { return MCL.emptyState(ic || "inbox", t); }
+function sec(ic, t) { return '<div class="section-title">' + MCL.icon(ic) + t + "</div>"; }
 function latestTarget(targets, p, m) { return targets.filter(function (r) { return r.category === p && r.title === m; })[0]; }
 
 // Estimate of the running shift: trips so far + remaining hours x blended rate.
@@ -104,42 +105,52 @@ async function load() {
     var activeFaces = faces.filter(function (r) { return r.status === "In progress"; });
 
     var h = "";
+    // ---- 0. Banner: running shift ----
+    var left = Math.max(0, 8 - now.elapsed), lh = Math.floor(left), lm = Math.round((left - lh) * 60);
+    if (lm === 60) { lh++; lm = 0; }
+    var hr = +now.time.slice(0, 2), greet = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
+    h += '<div class="hero">' + MCL.art() + '<div class="hero-in"><div class="eyebrow">' + greet + " &middot; " + esc(MCL.prettyDate(now.date)) + "</div>" +
+      "<h2>Shift " + now.shift + " is running</h2><p>" + lh + " h " + lm + " min left in this shift</p>" + bar(now.elapsed / 8 * 100) +
+      '<div class="pills"><span class="pill">' + MCL.icon("truck") + cnt.Running + (cnt.Running === 1 ? " machine" : " machines") + " running</span>" +
+      '<span class="pill">' + MCL.icon("pickaxe") + activeFaces.length + (activeFaces.length === 1 ? " active face" : " active faces") + "</span>" +
+      (cnt.Breakdown ? '<span class="pill">' + MCL.icon("wrench") + cnt.Breakdown + " breakdown" + (cnt.Breakdown > 1 ? "s" : "") + "</span>" : "") + "</div></div></div>";
+
     // ---- 1. Summary strip ----
     function dayTile(mat, label) {
       var p = P[mat], q = function (n) { return MCL.fmtQty(n, mat); }, t = p.tg.Daily;
       var v = t ? pct(p.dayEst, t) : null;
       return MCL.kpi(label + " today (expected)", v == null ? q(p.dayEst) : num(v, 0) + "%",
-        t ? q(p.dayEst) + " of " + q(t) : "no daily target set", v == null ? "info" : v >= 95 ? "ok" : v >= 75 ? "warn" : "bad");
+        t ? q(p.dayEst) + " of " + q(t) : "no daily target set", v == null ? "info" : v >= 95 ? "ok" : v >= 75 ? "warn" : "bad", mat === "Coal" ? "coal" : "layers");
     }
     function monthTile(mat, label) {
       var p = P[mat], q = function (n) { return MCL.fmtQty(n, mat); }, t = p.tg.Monthly;
-      return MCL.kpi(label + " this month", t ? num(pct(p.act.Monthly, t), 1) + "%" : q(p.act.Monthly), t ? q(p.act.Monthly) + " of " + q(t) : "no monthly target set", "info");
+      return MCL.kpi(label + " this month", t ? num(pct(p.act.Monthly, t), 1) + "%" : q(p.act.Monthly), t ? q(p.act.Monthly) + " of " + q(t) : "no monthly target set", "info", "target");
     }
     h += '<div class="kpis">' + dayTile("Coal", "Coal") + dayTile("OB", "OB") + monthTile("Coal", "Coal") + monthTile("OB", "OB") +
-      MCL.kpi("Fleet running", cnt.Running + " / " + fl.length, cnt.Idle + " idle", "ok") +
-      MCL.kpi("Breakdowns", String(cnt.Breakdown), num(sum(bdowns, "qty"), 1) + " hours lost", cnt.Breakdown ? "bad" : "ok") +
-      MCL.kpi("Open hindrances", String(hind.length), hind.filter(function (r) { return r.urgency === "High"; }).length + " high urgency", hind.length ? "warn" : "ok") +
-      MCL.kpi("Active faces", String(activeFaces.length), faces.length - activeFaces.length + " planned", "info") + "</div>";
+      MCL.kpi("Fleet running", cnt.Running + " / " + fl.length, cnt.Idle + " idle", "ok", "truck") +
+      MCL.kpi("Breakdowns", String(cnt.Breakdown), num(sum(bdowns, "qty"), 1) + " hours lost", cnt.Breakdown ? "bad" : "ok", "wrench") +
+      MCL.kpi("Open hindrances", String(hind.length), hind.filter(function (r) { return r.urgency === "High"; }).length + " high urgency", hind.length ? "warn" : "ok", "alert") +
+      MCL.kpi("Active faces", String(activeFaces.length), faces.length - activeFaces.length + " planned", "info", "pickaxe") + "</div>";
 
     // ---- 2. Instructions ----
     if (ins.length) {
-      h += '<div class="card instr"><h2>Instructions from management ' + stBadge(ins.length + " open") + "</h2>" + ins.map(function (r) {
+      h += '<div class="card instr">' + MCL.h2("megaphone", "Instructions from management " + stBadge(ins.length + " open"), "bad") + ins.map(function (r) {
         return '<div class="item"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + " " + stBadge(INS_ST[r.status]) +
           '<div class="muted">For: ' + esc(r.location || "Everyone") + "</div>" +
           (r.details ? "<div>" + esc(r.details) + "</div>" : "") + "</div>"; }).join("") + "</div>";
     }
 
     // ---- 3. Production vs target ----
-    h += '<div class="section-title">Production</div><div class="grid two">';
+    h += sec("factory", "Production") + '<div class="grid two">';
     ["Coal", "OB"].forEach(function (mat) {
       var p = P[mat], q = function (n) { return MCL.fmtQty(n, mat); };
-      h += '<div class="card"><h2>' + (mat === "Coal" ? "Coal production" : "OB removal") + ' <span class="muted small">' + UNIT[mat] + "</span></h2>";
+      h += '<div class="card">' + MCL.h2(mat === "Coal" ? "coal" : "layers", (mat === "Coal" ? "Coal production" : "OB removal") + ' <span class="muted small">' + UNIT[mat] + "</span>", mat === "Coal" ? "dark" : "");
       ["Daily", "Monthly", "Annual"].forEach(function (per) {
         var tv = p.tg[per], a = p.act[per];
         h += '<div class="prow"><div class="prow-h"><span>' + per + "</span><b>" + (tv ? num(pct(a, tv), 1) + "%" : "-") + "</b></div>" + bar(pct(a, tv)) +
              '<div class="muted small">' + q(a) + " of " + (tv ? q(tv) : "no target set") + "</div></div>";
       });
-      h += '<div class="estbox"><div class="prow-h"><span>Running shift ' + now.shift + " - estimate</span></div>" +
+      h += '<div class="estbox"><div class="prow-h"><span>' + MCL.icon("gauge") + " Running shift " + now.shift + " - estimate</span></div>" +
            '<div class="big">' + q(p.est.value) + '</div><div class="muted small">expected by shift end</div>' + bar(p.tg.Daily ? pct(p.dayEst, p.tg.Daily) : 0, true) +
            '<div class="muted small">Day total with estimate: <b>' + q(p.dayEst) + "</b>" + (p.tg.Daily ? " of " + q(p.tg.Daily) : "") + ".</div>" +
            '<details class="small"><summary class="muted">How is this worked out?</summary><div class="muted">Trips so far (' + q(p.est.tripsT) +
@@ -149,34 +160,34 @@ async function load() {
     h += "</div>";
 
     // ---- 4. Faces ----
-    h += '<div class="section-title">Working faces</div><div class="grid two">';
+    h += sec("pickaxe", "Working faces") + '<div class="grid two">';
     ["Coal", "OB"].forEach(function (mat) {
       var l = faces.filter(function (r) { return r.category === mat; });
-      h += '<div class="card"><h2>' + (mat === "Coal" ? "Coal faces" : "OB faces") + " " + stBadge(l.filter(function (r) { return r.status === "In progress"; }).length + " active") + "</h2>" +
+      h += '<div class="card">' + MCL.h2(mat === "Coal" ? "coal" : "layers", (mat === "Coal" ? "Coal faces" : "OB faces") + " " + stBadge(l.filter(function (r) { return r.status === "In progress"; }).length + " active"), mat === "Coal" ? "dark" : "") +
         (l.length ? l.map(function (r) {
           return '<div class="item"><b>' + esc(r.title) + "</b> " + '<span class="badge ' + (r.status === "In progress" ? "Low" : "") + '">' + esc(FACE_ST[r.status]) + "</span>" +
             (r.urgency !== "Low" ? " " + badge(r.urgency) : "") +
             (r.location ? '<div class="muted">' + esc(r.location) + "</div>" : "") + (r.details ? '<div class="small">' + esc(r.details) + "</div>" : "") + "</div>"; }).join("")
-          : empty("No faces entered.")) + "</div>";
+          : empty("No faces entered.", "pickaxe")) + "</div>";
     });
     h += "</div>";
 
     // ---- 5. Fleet ----
-    h += '<div class="section-title">Fleet - ' + esc(MCL.prettyDate(now.shiftDate)) + '</div><div class="grid two">';
+    h += sec("truck", "Fleet - " + esc(MCL.prettyDate(now.shiftDate))) + '<div class="grid two">';
     var faceSet = {}; fl.forEach(function (m) { (faceSet[m.face || "-"] = faceSet[m.face || "-"] || []).push(m); });
-    h += '<div class="card"><h2>Running fleet status</h2><div class="small">' +
+    h += '<div class="card">' + MCL.h2("activity", "Running fleet status", "ok") + '<div class="small">' +
       '<span class="badge Low">' + cnt.Running + ' running</span> <span class="badge Medium">' + cnt.Idle + ' idle</span> <span class="badge High">' + cnt.Breakdown + " breakdown</span></div>" +
       (Object.keys(faceSet).length ? Object.keys(faceSet).map(function (f) {
         return "<h3>" + esc(f) + "</h3>" + faceSet[f].map(function (m) {
           return '<div class="item"><b>' + esc(m.id) + '</b> <span class="muted">' + esc(m.type || "") + '</span> <span class="badge ' + STC[m.state] + '">' + m.state + "</span></div>"; }).join(""); }).join("")
-        : empty("No machine status reported today.")) + "</div>";
+        : empty("No machine status reported today.", "truck")) + "</div>";
 
-    h += '<div class="card"><h2>Open breakdowns ' + (bdowns.length ? '<span class="badge High">' + bdowns.length + "</span>" : "") + "</h2>" + (bdowns.length ? bdowns.map(function (r) {
+    h += '<div class="card">' + MCL.h2("wrench", "Open breakdowns " + (bdowns.length ? '<span class="badge High">' + bdowns.length + "</span>" : ""), "bad") + (bdowns.length ? bdowns.map(function (r) {
       return '<div class="item"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + " " + stBadge(r.status === "Open" ? "Breakdown" : "Under repair") +
         '<div class="muted">' + esc(r.category || "") + (r.location ? " @ " + esc(r.location) : "") + (r.qty ? " &middot; " + num(r.qty, 1) + " hrs lost" : "") + "</div>" +
-        (r.details ? '<div class="small">' + esc(r.details) + "</div>" : "") + "</div>"; }).join("") : empty("No open breakdowns.")) + "</div></div>";
+        (r.details ? '<div class="small">' + esc(r.details) + "</div>" : "") + "</div>"; }).join("") : empty("No open breakdowns.", "check")) + "</div></div>";
 
-    h += '<div class="card"><h2>Deployment by shift</h2><div class="scroll"><table class="table"><tr><th>Shift</th><th>Overmen</th><th>Machines on faces</th><th>Available</th></tr>';
+    h += '<div class="card">' + MCL.h2("hardhat", "Deployment by shift", "info") + '<div class="scroll"><table class="table"><tr><th>Shift</th><th>Overmen</th><th>Machines on faces</th><th>Available</th></tr>';
     ["A", "B", "C"].forEach(function (s) {
       var l = deploys.filter(function (r) { return r.shift === s; }), byFace = {}, total = 0;
       l.forEach(function (r) { (byFace[r.title] = byFace[r.title] || []).push(num(r.qty) + " " + esc(r.category || "")); total += Number(r.qty) || 0; });
@@ -192,10 +203,10 @@ async function load() {
     h += "</table></div></div>";
 
     // ---- 6. Hindrances ----
-    h += '<div class="section-title">Hindrances</div><div class="card">' + (hind.length ? hind.map(function (r) {
+    h += sec("alert", "Hindrances") + '<div class="card">' + (hind.length ? hind.map(function (r) {
       return '<div class="item"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + " " + stBadge(HIND_ST[r.status]) +
         '<div class="muted">' + esc(r.category || "") + (r.location ? " @ " + esc(r.location) : "") + (r.qty ? " &middot; " + num(r.qty, 1) + " hrs lost" : "") + "</div>" +
-        (r.details ? '<div class="small">' + esc(r.details) + "</div>" : "") + "</div>"; }).join("") : empty("No open hindrances.")) + "</div>";
+        (r.details ? '<div class="small">' + esc(r.details) + "</div>" : "") + "</div>"; }).join("") : empty("No open hindrances.", "check")) + "</div>";
 
     $("board").innerHTML = h; $("status").innerHTML = "";
     $("stamp").textContent = "Updated " + MCL.clockText() + ". Production counts up to the end of the previous shift. Refreshes every minute.";
