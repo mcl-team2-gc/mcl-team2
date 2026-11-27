@@ -5,13 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mine Monitor - Metrics</title>
   <link rel="stylesheet" href="style.css">
-  <style>
-    .kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
-    @media(min-width:700px){.kpis{grid-template-columns:repeat(3,1fr)}}
-    .kpi{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}
-    .kpi b{display:block;font-size:1.6rem;color:var(--brand-d)}
-    .chartbox{position:relative;height:260px}
-  </style>
+  <meta name="theme-color" content="#0f172a">
 </head>
 <body>
 <header id="app-header"></header>
@@ -25,7 +19,7 @@
     <div class="card"><h2>Fleet deployed today, by machine type</h2><div class="chartbox"><canvas id="cFleet" role="img" aria-label="Fleet deployment chart"></canvas></div></div>
     <div class="card"><h2>Hours lost by kind of hindrance</h2><div class="chartbox"><canvas id="cHind" role="img" aria-label="Hours lost chart"></canvas></div></div>
   </div>
-  <p class="muted">Production is counted up to the end of the previous shift. Refreshes every 5 minutes.</p>
+  <p class="muted" id="stamp">Production is counted up to the end of the previous shift. Refreshes every 5 minutes.</p>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -38,13 +32,20 @@ var $ = function (id) { return document.getElementById(id); };
 var db = null, charts = {};
 var COL = { Coal: "#374151", OB: "#b45309", target: "#047857", A: "#1d4ed8", B: "#b45309", C: "#6b7280" };
 
+if (window.Chart && Chart.defaults && Chart.defaults.font) {
+  Chart.defaults.font.family = 'system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif';
+  Chart.defaults.color = "#64748b";
+  Chart.defaults.borderColor = "#eef0f3";
+  Chart.defaults.plugins.legend.labels.usePointStyle = true;
+  Chart.defaults.elements.bar.borderRadius = 6;
+}
 function mk(id, cfg) {
   if (charts[id]) charts[id].destroy();
   cfg.options = Object.assign({ responsive: true, maintainAspectRatio: false }, cfg.options || {});
   charts[id] = new Chart($(id), cfg);
 }
 function sumBy(rows, f) { return rows.reduce(function (a, r) { return a + (Number(r[f]) || 0); }, 0); }
-function kpi(label, value, sub) { return '<div class="kpi"><span class="muted">' + esc(label) + "</span><b>" + value + "</b>" + (sub ? '<span class="muted">' + sub + "</span>" : "") + "</div>"; }
+var kpi = MCL.kpi;
 function latest(targets, p, m) { return targets.filter(function (r) { return r.category === p && r.title === m; })[0]; }
 
 async function load() {
@@ -59,32 +60,31 @@ async function load() {
     var setting = await MCL.loadSetting(db), now = MCL.renderHeader("metrics", setting);
     var month = now.shiftDate.slice(0, 8) + "01", from14 = MCL.addDays(now.shiftDate, -13);
     var since = month < from14 ? month : from14;
-    var q = function (type) { return db.from(T).select("*").eq("record_type", type); };
     var res = await Promise.all([
-      MCL.fetchAll(function () { return q("production").gte("record_date", since).order("created_at").order("id"); }),
-      MCL.fetchAll(function () { return q("target").order("created_at", { ascending: false }).order("id"); }),
-      MCL.fetchAll(function () { return q("hindrance").order("created_at", { ascending: false }).order("id"); }),
-      MCL.fetchAll(function () { return q("deploy").eq("record_date", now.shiftDate).order("created_at").order("id"); }),
-      MCL.fetchAll(function () { return q("face").eq("status", "In progress").order("id"); }),
-      MCL.fetchAll(function () { return q("instruction").neq("status", "Resolved").order("id"); }),
-      MCL.fetchAll(function () { return q("breakdown").neq("status", "Resolved").order("id"); })
+      MCL.fetchAll(function () { return db.from(T).select("id,title,qty,shift,record_date").eq("record_type", "production").gte("record_date", since).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("id,record_type,category,title,qty,status,urgency,shift,record_date").in("record_type", ["target", "hindrance"]).order("created_at", { ascending: false }).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("id,record_type,category,qty,shift,status,record_date").eq("record_type", "deploy").eq("record_date", now.shiftDate).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("id,record_type,category,qty,status").in("record_type", ["face", "instruction", "breakdown"]).neq("status", "Resolved").order("id"); })
     ]);
+    function pick(rows, type) { return rows.filter(function (r) { return r.record_type === type; }); }
     var prod = res[0].filter(function (r) { return !(r.record_date === now.shiftDate && r.shift === now.shift); });
-    var targets = res[1], hind = res[2], deploys = res[3], faces = res[4], ins = res[5], bd = res[6];
+    var targets = pick(res[1], "target"), hind = pick(res[1], "hindrance");
+    var deploys = res[2], faces = pick(res[3], "face").filter(function (r) { return r.status === "In progress"; });
+    var ins = pick(res[3], "instruction"), bd = pick(res[3], "breakdown");
 
     // KPI tiles
     var k = "";
     ["Coal", "OB"].forEach(function (m) {
       var act = sumBy(prod.filter(function (r) { return r.title === m && r.record_date >= month; }), "qty");
       var t = latest(targets, "Monthly", m);
-      k += kpi(m + " this month", t ? num(act / Number(t.qty) * 100, 1) + "%" : MCL.fmtQty(act, m), t ? MCL.fmtQty(act, m) + " of " + MCL.fmtQty(Number(t.qty), m) : "no monthly target set");
+      k += kpi(m + " this month", t ? num(act / Number(t.qty) * 100, 1) + "%" : MCL.fmtQty(act, m), t ? MCL.fmtQty(act, m) + " of " + MCL.fmtQty(Number(t.qty), m) : "no monthly target set", "info");
     });
     var openH = hind.filter(function (r) { return r.status !== "Resolved"; });
-    k += kpi("Open hindrances", num(openH.length), num(sumBy(openH, "qty"), 1) + " hours lost so far");
-    k += kpi("Machines in breakdown", num(bd.length), num(sumBy(bd, "qty"), 1) + " hours lost so far");
-    k += kpi("Active faces", num(faces.length));
-    k += kpi("Machines deployed today", num(sumBy(deploys, "qty")));
-    k += kpi("Open instructions", num(ins.length));
+    k += kpi("Open hindrances", num(openH.length), num(sumBy(openH, "qty"), 1) + " hours lost so far", openH.length ? "warn" : "ok");
+    k += kpi("Machines in breakdown", num(bd.length), num(sumBy(bd, "qty"), 1) + " hours lost so far", bd.length ? "bad" : "ok");
+    k += kpi("Active faces", num(faces.length), "", "info");
+    k += kpi("Machines deployed today", num(sumBy(deploys, "qty")), "", "info");
+    k += kpi("Open instructions", num(ins.length), "", ins.length ? "warn" : "ok");
     $("kpis").innerHTML = k;
     if (typeof Chart === "undefined") return;
 
@@ -117,12 +117,13 @@ async function load() {
     var kn = Object.keys(kinds).sort(function (a, b) { return kinds[b] - kinds[a]; });
     mk("cHind", { type: "bar", data: { labels: kn, datasets: [{ label: "Hours lost", backgroundColor: "#b91c1c", data: kn.map(function (c) { return kinds[c]; }) }] },
       options: { indexAxis: "y", plugins: { legend: { display: false } } } });
+    $("stamp").textContent = "Updated " + MCL.clockText() + ". Production counts up to the end of the previous shift. Refreshes every 5 minutes.";
     if (!($("status").innerHTML.indexOf("did not load") > -1)) $("status").innerHTML = "";
   } catch (e) {
     MCL.showMsg($("status"), "err", "Could not load the metrics. Has 01-setup.sql been run?", e);
   }
 }
-load(); setInterval(load, 300000);
+MCL.autoRefresh(load, 300000);
 </script>
 </body>
 </html>

@@ -114,20 +114,37 @@
   };
 
   // ---- same header + menu on every page ----
+  var SHIFT_HOURS = { A: "6 am - 2 pm", B: "2 pm - 10 pm", C: "10 pm - 6 am" };
+  var LOGO = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M5 20l5-9 3 5 2-3 4 7"/><circle cx="16" cy="6" r="2"/></svg>';
   MCL.renderHeader = function (active, setting) {
     MCL._active = active; MCL._setting = setting;
     var n = MCL.mineNow(setting), host = document.getElementById("app-header");
+    function link(href, key, text) { return '<a href="' + href + '"' + (active === key ? ' class="on" aria-current="page"' : "") + ">" + text + "</a>"; }
     host.className = "top";
-    host.innerHTML =
-      "<h1>" + MCL.esc(n.name) + "</h1>" +
-      '<div class="clock">' + MCL.esc(MCL.prettyDate(n.date)) + " &middot; " + MCL.esc(n.time) +
-      " &middot; Shift " + n.shift + '<br><small>' + MCL.esc(n.tz) + (n.live ? " &middot; system clock" : " &middot; set by hand") + "</small></div>" +
-      '<nav class="menu"><a href="dashboard.html"' + (active === "dash" ? ' class="on"' : "") + ">Dashboard</a>" +
-      '<a href="metrics.html"' + (active === "metrics" ? ' class="on"' : "") + ">Metrics</a>" +
-      '<a href="index.html"' + (active === "entry" ? ' class="on"' : "") + ">Data entry</a></nav>";
-    if (!MCL._tick) {   // keep the clock moving
-      MCL._tick = setInterval(function () { MCL.renderHeader(MCL._active, MCL._setting); }, 30000);
+    host.innerHTML = '<div class="hd-in">' +
+      '<div class="brand"><span class="logo">' + LOGO + '</span><div><div class="sub">Mine Monitor</div><h1>' + MCL.esc(n.name) + "</h1></div></div>" +
+      '<div class="chips">' +
+        '<span class="chip">' + MCL.esc(MCL.prettyDate(n.date)) + "</span>" +
+        '<span class="chip"><span class="dot' + (n.live ? "" : " off") + '"></span><b>' + MCL.esc(n.time) + "</b>" + (n.live ? "" : " (set by hand)") + "</span>" +
+        '<span class="chip">Shift <b>' + n.shift + "</b>&nbsp;" + SHIFT_HOURS[n.shift] + "</span>" +
+        '<span class="chip">' + MCL.esc(n.tz) + "</span>" +
+      "</div>" +
+      '<nav class="menu">' + link("dashboard.html", "dash", "Dashboard") + link("metrics.html", "metrics", "Metrics") + link("index.html", "entry", "Data entry") + "</nav></div>";
+    if (!MCL._tick) {   // keep the clock moving (only while the page is on screen)
+      MCL._tick = setInterval(function () { if (!document.hidden) MCL.renderHeader(MCL._active, MCL._setting); }, 30000);
     }
     return n;
   };
+
+  // Run fn now and every "ms" milliseconds, but only while the page is on screen.
+  MCL.autoRefresh = function (fn, ms) {
+    fn();
+    setInterval(function () { if (!document.hidden) fn(); }, ms);
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) fn(); });
+  };
+  MCL.kpi = function (label, value, sub, tone) {
+    return '<div class="kpi ' + (tone || "") + '"><span class="lbl">' + MCL.esc(label) + "</span><b>" + value + "</b>" +
+      (sub ? '<span class="muted">' + sub + "</span>" : "") + "</div>";
+  };
+  MCL.clockText = function () { var d = new Date(); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
 })();
