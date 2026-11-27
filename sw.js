@@ -2,8 +2,8 @@
 // Pages and our own files: try the network first (so updates show), use the saved copy when offline.
 // Library files from the CDN: use the saved copy, refresh it in the background.
 // Database and weather requests are never saved here.
-var CACHE = "mine-monitor-v1";
-var CORE = ["./", "index.html", "dashboard.html", "metrics.html", "style.css", "common.js", "i18n.js", "config.js",
+var CACHE = "mine-monitor-v2";
+var CORE = ["./", "index.html", "dashboard.html", "metrics.html", "style.css", "common.js", "i18n.js", "config.js", "demo.js",
             "manifest.json", "icon.svg", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", function (e) {

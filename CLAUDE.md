@@ -38,7 +38,7 @@
    and the Data Keeper creates the same e-mail in Supabase (Authentication >
    Users > Add user, "Auto Confirm User" ticked). Roles are checked by the
    database (function mine_can in 01-setup.sql), not only by the website.
-6b. Other shared files in the top folder: common.js (header, icons, helpers),
+6b. Other shared files in the top folder: demo.js (DEMO MODE: open any page with ?demo=1 for made-up data, ?demo=0 to stop; never touches the real database), common.js (header, icons, helpers),
    i18n.js (Hindi/Odia words), style.css, manifest.json + sw.js + icon files
    (install as an app, offline use). The weather card uses the free
    Open-Meteo service (only the mine's latitude/longitude is sent).
@@ -130,3 +130,11 @@
   01-setup.sql run again AND Supabase users created for each staff e-mail; hints in forms stay in
   English; weather needs latitude/longitude in Mine settings. Next: Data Keeper runs 01-setup.sql,
   creates the 8 sample users (or your own made-up ones) in Supabase Authentication, team tests each role.
+- Phase 5b (Claude): DEMO MODE (demo.js): add ?demo=1 to any page address to see the whole tool filled with
+  made-up data for a whole financial year (production, faces, 25 machines, breakdowns, HEMM, trips, hindrances,
+  safety, blasting, instructions). Sign in with any demo e-mail (admin@, gm@, po@, mm@, pi@, shift@, overman1@,
+  overman2@example.com) and any password. Nothing is saved; the real database is not used. Checked all 3 pages,
+  daily report, past date, TV mode, dark mode, Hindi, Odia and all 8 roles (every form saved) at phone and laptop
+  size: no errors. Fixed from this check: shift estimate fell to almost 0 when no trips were entered (now uses past
+  averages); plan vs actual showed future shifts as red 0% (now "not started"); HEMM availability card was empty
+  in the first shift of the day (now shows yesterday); Metrics chart cards were wider than a phone screen.

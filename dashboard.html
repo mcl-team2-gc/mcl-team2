@@ -27,6 +27,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
+<script src="demo.js"></script>
 <script src="i18n.js"></script>
 <script src="common.js"></script>
 <script>
@@ -63,7 +64,7 @@ function estimate(mat, now, prod, trips) {
   var keys = Object.keys(byShift).sort().reverse().slice(0, 10);
   var avgShift = keys.length ? keys.reduce(function (a, k) { return a + byShift[k]; }, 0) / keys.length : 0;
   var histRate = avgShift / 8, el = now.elapsed, w = el / 8;
-  var tripRate = el >= 0.25 ? tripsT / el : null;
+  var tripRate = el >= 0.25 && tripsT > 0 ? tripsT / el : null;   // no trips entered = use past averages only
   var rate = tripRate == null ? histRate : (w * tripRate + (1 - w) * histRate);
   return { value: tripsT + (8 - el) * rate, tripsT: tripsT, avgShift: avgShift, n: keys.length };
 }
@@ -117,7 +118,9 @@ async function load() {
     var near = res[1], dayRows = near.filter(function (r) { return r.record_date === D; }), open = res[2];
     var trips = pick(dayRows, "trip"), curTrips = trips.filter(function (r) { return r.shift === now.shift; });
     var machines = pick(dayRows, "machine"), deploys = pick(dayRows, "deploy"), assigns = pick(dayRows, "assign"), fleet = pick(dayRows, "fleet");
-    var plans = pick(dayRows, "plan"), blasts = pick(dayRows, "blast"), sprays = pick(dayRows, "spray"), hemm = pick(dayRows, "hemm");
+    var plans = pick(dayRows, "plan"), blasts = pick(dayRows, "blast"), sprays = pick(dayRows, "spray");
+    // HEMM logbook is filled at shift end: show today's, or yesterday's if today has none yet
+    var hemmDay = pick(dayRows, "hemm").length ? D : yday, hemm = pick(near, "hemm").filter(function (r) { return r.record_date === hemmDay; });
     var handovers = pick(near, "handover");
     var targets = pick(open, "target"), faces = pick(open, "face"), hind = pick(open, "hindrance"), ins = pick(open, "instruction");
     var bdowns = pick(open, "breakdown"), safety = pick(open, "safety"), assets = pick(open, "asset");
@@ -248,9 +251,10 @@ async function load() {
     var pvl = Object.keys(pv).map(function (k) { return pv[k]; }).sort(function (a, b) { return (a.shift + a.face) < (b.shift + b.face) ? -1 : 1; });
     h += card("target", t("Plan vs actual by face") + ' <span class="muted small">' + t("actual from trips") + "</span>", "info", pvl.length ?
       '<div class="scroll"><table class="table"><tr><th>' + t("Shift") + "</th><th>" + t("Face") + "</th><th>" + t("Plan") + "</th><th>" + t("Actual") + "</th><th>%</th></tr>" + pvl.map(function (x) {
-        var pc = x.plan ? pct(x.act, x.plan) : null;
+        var later = !now.past && SHIFT_ORDER[x.shift] > SHIFT_ORDER[now.shift];   // shift not started yet
+        var pc = x.plan && !later ? pct(x.act, x.plan) : null;
         return "<tr" + (x.shift === now.shift ? ' class="now-row"' : "") + "><td><b>" + esc(x.shift) + "</b></td><td>" + esc(x.face) + "</td><td>" + (x.plan ? MCL.fmtQty(x.plan, x.mat) : "-") + "</td><td>" + MCL.fmtQty(x.act, x.mat) + "</td><td>" +
-          (pc == null ? "-" : '<span class="badge ' + (pc >= 95 ? "Low" : pc >= 75 ? "Medium" : "High") + '">' + num(pc, 0) + "%</span>") + "</td></tr>"; }).join("") + "</table></div>"
+          (later ? '<span class="muted small">' + t("not started") + "</span>" : pc == null ? "-" : '<span class="badge ' + (pc >= 95 ? "Low" : pc >= 75 ? "Medium" : "High") + '">' + num(pc, 0) + "%</span>") + "</td></tr>"; }).join("") + "</table></div>"
       : empty("No shift plan or trips for this day yet.", "target"));
 
     // ---- faces ----
@@ -278,14 +282,14 @@ async function load() {
     h += "</div>";
 
     // HEMM availability / utilisation for the day (from the logbook)
-    var bdH = {}; pick(open, "breakdown").concat(res[3] ? pick(res[3], "breakdown") : []).forEach(function (r) { if (r.record_date === D) { var k = r.title + "|" + r.shift; bdH[k] = Math.max(bdH[k] || 0, Number(r.qty) || 0); } });
+    var bdH = {}; pick(open, "breakdown").concat(res[3] ? pick(res[3], "breakdown") : []).forEach(function (r) { if (r.record_date === hemmDay) { var k = r.title + "|" + r.shift; bdH[k] = Math.max(bdH[k] || 0, Number(r.qty) || 0); } });
     var byType = {};
     hemm.forEach(function (r) {
       var k = r.category || "Other", x = byType[k] = byType[k] || { n: 0, sched: 0, avail: 0, work: 0, diesel: 0 };
       var b = Math.min(8, bdH[r.title + "|" + r.shift] || 0); x.n++; x.sched += 8; x.avail += 8 - b; x.work += Math.min(8, Number(r.qty) || 0); x.diesel += Number(r.qty2) || 0;
     });
     var bt = Object.keys(byType);
-    h += card("gauge", t("Availability and utilisation (HEMM logbook)"), "info", bt.length ?
+    h += card("gauge", t("Availability and utilisation (HEMM logbook)") + ' <span class="muted small">' + esc(MCL.prettyDate(hemmDay)) + "</span>", "info", bt.length ?
       '<div class="scroll"><table class="table"><tr><th>' + t("Machine type") + "</th><th>" + t("Entries") + "</th><th>" + t("Availability") + "</th><th>" + t("Utilisation") + "</th><th>" + t("Diesel") + "</th></tr>" + bt.map(function (k) {
         var x = byType[k], av = pct(x.avail, x.sched), ut = pct(x.work, x.avail);
         return "<tr><td><b>" + esc(t(k)) + "</b></td><td>" + x.n + "</td><td>" + num(av, 0) + "%" + bar(av) + "</td><td>" + num(ut, 0) + "%" + bar(ut) + "</td><td>" + num(x.diesel) + " L</td></tr>"; }).join("") + "</table></div>" +
