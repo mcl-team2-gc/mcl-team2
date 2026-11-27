@@ -60,6 +60,25 @@
   };
 
 
+  // ---- small helpers ----
+  MCL.store = function (k, v) {          // phone storage that never crashes (private mode etc.)
+    try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; }
+  };
+  MCL.timeText = function (iso) {        // "27 Nov 14:05" in the phone's own time
+    if (!iso) return "";
+    var d = new Date(iso), m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return d.getDate() + " " + m[d.getMonth()] + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  };
+  // Translation: MCL.t("English text") gives the chosen language, or English if no translation exists.
+  MCL.lang = function () { return MCL.store("mclLang") || "en"; };
+  MCL.t = function (s) { var d = (window.MCL_LANG || {})[MCL.lang()]; return (d && d[s]) || s; };
+  MCL.translatePage = function () {      // elements marked data-t are translated once
+    Array.prototype.forEach.call(document.querySelectorAll("[data-t]"), function (el) {
+      if (!el.dataset.en) el.dataset.en = el.textContent.trim();
+      el.textContent = MCL.t(el.dataset.en);
+    });
+  };
+
   // ---- icons (simple line drawings, drawn in the page - nothing to download) ----
   var IC = {
     grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',

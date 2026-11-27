@@ -5,41 +5,36 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mine Monitor - Data entry</title>
   <meta name="theme-color" content="#0f172a">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header id="app-header"></header>
 <main>
   <div id="status"></div>
+  <div id="queueMsg"></div>
 
   <section id="login" class="card login" hidden>
     <div class="login-art" id="loginArt"></div>
-    <h2><span class="hic" id="lockIc"></span>Sign in to enter data</h2>
-    <p class="muted">Pick your role and type your passcode. The Dashboard needs no passcode.</p>
-    <label for="role">Role</label>
-    <select id="role">
-      <option value="gm">General Manager</option>
-      <option value="po">Project Officer</option>
-      <option value="mm">Mine Manager</option>
-      <option value="pi">Production Incharge</option>
-      <option value="shift">Shift Incharge</option>
-      <option value="overman">Overman</option>
-      <option value="admin">Admin</option>
-    </select>
-    <div id="nameRow" hidden>
-      <label for="uname">Your name or ID (Overman)</label>
-      <input id="uname" type="text" autocomplete="off" placeholder="Same name the Shift Incharge uses">
-    </div>
-    <label for="code">Passcode</label>
-    <input id="code" type="password" autocomplete="off">
-    <button id="loginBtn">Sign in</button>
+    <h2><span class="hic" id="lockIc"></span><span data-t>Sign in to enter data</span></h2>
+    <p class="muted" data-t>Use the e-mail and password the Admin gave you. The Dashboard needs no sign-in.</p>
+    <form id="loginForm">
+      <label for="email" data-t>E-mail</label>
+      <input id="email" type="email" autocomplete="username" required>
+      <label for="pass" data-t>Password</label>
+      <input id="pass" type="password" autocomplete="current-password" required>
+      <button type="submit" id="loginBtn" data-t>Sign in</button>
+    </form>
+    <p class="muted small" data-t>Forgot your password? Ask the Admin.</p>
   </section>
 
   <section id="app" hidden>
     <div class="card userbar">
       <div style="display:flex;gap:10px;align-items:center;min-width:0"><span class="avatar" id="av"></span>
-        <div style="min-width:0"><div class="muted small">Signed in as</div><b id="who"></b></div></div>
-      <button class="small alt" id="logout"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>Sign out</button>
+        <div style="min-width:0"><div class="muted small" data-t>Signed in as</div><b id="who"></b></div></div>
+      <button class="small alt" id="logout"></button>
     </div>
     <div class="tabs" id="tabs"></div>
     <div id="module"></div>
@@ -50,49 +45,75 @@
 <script src="config.js"></script>
 <script src="common.js"></script>
 <script>
-var T = MCL.TABLE, esc = MCL.esc;
+var T = MCL.TABLE, esc = MCL.esc, t = MCL.t;
 var ROLE_NAMES = { gm: "General Manager", po: "Project Officer", mm: "Mine Manager",
                    pi: "Production Incharge", shift: "Shift Incharge", overman: "Overman", admin: "Admin" };
+var EVERY = ["admin", "gm", "po", "mm", "pi", "shift", "overman"];
 var SHIFTS = [["A","A (6 am - 2 pm)"],["B","B (2 pm - 10 pm)"],["C","C (10 pm - 6 am)"]];
 var URG = [["Low","Low"],["Medium","Medium"],["High","High"]];
 var MAT = [["Coal","Coal"],["OB","OB (overburden)"]];
-var MTYPES = ["Shovel","Excavator","Dumper","Dozer","Drill","Pay loader","Surface miner","Water tanker","Other"].map(function (x) { return [x, x]; });
-var FOR_WHO = [["All","Everyone"]].concat(Object.keys(ROLE_NAMES).filter(function (k) { return k !== "admin"; }).map(function (k) { return [ROLE_NAMES[k], ROLE_NAMES[k]]; }));
+var UNITF = { k: "_unit", l: "Unit of the quantity", t: "select", virtual: 1, o: [["1","Tonnes (Coal) / cu.m (OB)"],["1000000","Million Tonnes (Coal) / Million cu.m (OB)"]], d: "1" };
+var MTYPES = ["Shovel","Excavator","Dumper","Dozer","Drill","Pay loader","Surface miner","Grader","Water tanker","Other"].map(function (x) { return [x, x]; });
+var FOR_WHO = [["Everyone","Everyone"]].concat(["gm","po","mm","pi","shift","overman"].map(function (k) { return [ROLE_NAMES[k], ROLE_NAMES[k]]; }));
+function list(a) { return a.map(function (x) { return [x, x]; }); }
 var STAT_LABELS = {
+  staff:       { "Open": "Active", "Resolved": "Switched off" },
+  asset:       { "Open": "In fleet", "Resolved": "Removed" },
   face:        { "Open": "Planned", "In progress": "Active", "Resolved": "Closed" },
-  hindrance:   { "Open": "Open", "In progress": "Being solved", "Resolved": "Resolved" },
+  blast:       { "Open": "Planned", "In progress": "Area cleared / firing", "Resolved": "Done - all clear" },
   fleet:       { "Open": "Idle", "In progress": "Running", "Resolved": "Off duty" },
   breakdown:   { "Open": "Breakdown", "In progress": "Under repair", "Resolved": "Back in service" },
-  instruction: { "Open": "New", "In progress": "Being acted on", "Resolved": "Done" }
+  hindrance:   { "Open": "Open", "In progress": "Being solved", "Resolved": "Resolved" },
+  safety:      { "Open": "Open", "In progress": "Action taken", "Resolved": "Closed" },
+  instruction: { "Open": "New", "In progress": "Seen - acting on it", "Resolved": "Done" }
 };
 function opts(map) { return Object.keys(map).map(function (k) { return [k, map[k]]; }); }
+function dt(r) { return (r.record_date || "") + (r.shift ? " Shift " + r.shift : ""); }
 
-// One module = one kind of record. "roles" says who may use it. Admin and General Manager see all modules.
+// One module = one kind of record. "roles" = who may use it (the database checks this too).
+// Field keys are table columns. dyn = options loaded from the database. auto = date + shift filled in automatically.
 var MODULES = [
+  { id: "myins", icon: "megaphone", label: "My instructions", roles: EVERY, view: "myins",
+    hint: "Instructions for you or for everyone. Tap Seen when you start, and Done when finished." },
   { id: "setting", icon: "sliders", label: "Mine name, date, time", roles: ["admin"], hint:
-    "Choose the system clock (automatic, in the time zone you pick) or set date and time by hand. The Date and Time boxes below are used only for 'by hand'.",
+    "Choose the system clock (automatic, in the time zone you pick) or set date and time by hand. Latitude and longitude are only used for the weather card.",
     fields: [ { k: "title", l: "Mine name", t: "text", req: 1 },
               { k: "details", l: "Date and time source", t: "select", o: [["system","Use system clock (automatic)"],["manual","Set date and time by hand"]], d: "system" },
               { k: "category", l: "Time zone", t: "select", o: MCL.TZS.map(function (z) { return [z, z]; }), d: MCL.DEFAULT_TZ },
               { k: "record_date", l: "Date (by hand only)", t: "date" },
-              { k: "record_time", l: "Time (by hand only)", t: "time" } ],
+              { k: "record_time", l: "Time (by hand only)", t: "time" },
+              { k: "qty", l: "Latitude (for weather, e.g. 21.9)", t: "number" },
+              { k: "qty2", l: "Longitude (for weather, e.g. 84.0)", t: "number" } ],
     line: function (r) { return r.title + " | " + (r.category || MCL.DEFAULT_TZ) + " | " + (r.details === "manual" ? "by hand " + (r.record_date || "") + " " + (r.record_time || "") : "system clock"); } },
+
+  { id: "staff", icon: "hardhat", label: "Staff list", roles: ["admin"], hint:
+    "Each person needs a row here AND a user in Supabase (Authentication > Users > Add user, with the same e-mail). Switch off a person instead of deleting.",
+    fields: [ { k: "title", l: "E-mail", t: "email", req: 1 },
+              { k: "category", l: "Role", t: "select", o: EVERY.map(function (k) { return [k, ROLE_NAMES[k]]; }) },
+              { k: "location", l: "Name shown on the site", t: "text", req: 1 } ],
+    flow: true, line: function (r) { return (r.location || "") + " - " + (ROLE_NAMES[r.category] || r.category) + " (" + r.title + ")"; } },
+
+  { id: "asset", icon: "box", label: "Machine list", roles: ["admin", "pi", "shift"], hint:
+    "The list of machines. Other forms then let you pick a machine instead of typing its ID.",
+    fields: [ { k: "title", l: "Machine ID", t: "text", req: 1 },
+              { k: "category", l: "Machine type", t: "select", o: MTYPES },
+              { k: "details", l: "Make / model / remarks", t: "text" } ],
+    flow: true, line: function (r) { return r.title + " (" + r.category + ")" + (r.details ? " - " + r.details : ""); } },
 
   { id: "target", icon: "target", label: "Targets", roles: ["po", "mm"], hint:
     "Newest entry for each Period + Material is used. Coal is in Tonnes (or Million Tonnes), OB in cu.m (or Million cu.m). Pick the unit first.",
-    fields: [ { k: "category", l: "Period", t: "select", o: [["Annual","Annual"],["Monthly","Monthly"],["Daily","Daily"]] },
-              { k: "title", l: "Material", t: "select", o: MAT },
-              { k: "_unit", l: "Unit of the quantity", t: "select", virtual: 1, o: [["1","Tonnes (Coal) / cu.m (OB)"],["1000000","Million Tonnes (Coal) / Million cu.m (OB)"]], d: "1" },
+    fields: [ { k: "category", l: "Period", t: "select", o: list(["Annual","Monthly","Daily"]) },
+              { k: "title", l: "Material", t: "select", o: MAT }, UNITF,
               { k: "qty", l: "Target quantity", t: "number", req: 1, scaled: 1 } ],
     line: function (r) { return r.category + " " + r.title + " target: " + MCL.fmtQty(r.qty, r.title); } },
 
-  { id: "instruction", icon: "megaphone", label: "Instructions", roles: ["po", "mm"], hint:
-    "Instructions to your team. They show at the top of the dashboard until marked Done.",
+  { id: "instruction", icon: "megaphone", label: "Give instructions", roles: ["po", "mm"], hint:
+    "Instructions to your team. They show on the dashboard until marked Done. You can see who has seen them.",
     fields: [ { k: "title", l: "Instruction", t: "text", req: 1 },
               { k: "location", l: "For", t: "select", o: FOR_WHO },
               { k: "urgency", l: "Urgency", t: "select", o: URG, d: "Medium" },
               { k: "details", l: "More details", t: "textarea" } ],
-    flow: true, line: function (r) { return r.title + (r.location ? " (for " + r.location + ")" : "") + (r.entered_by ? " - by " + (ROLE_NAMES[(r.entered_by || "").split(":")[0]] || r.entered_by) : ""); } },
+    flow: true, line: function (r) { return r.title + " (for " + (r.location || "Everyone") + ")"; } },
 
   { id: "face", icon: "pickaxe", label: "Working faces", roles: ["pi"], hint:
     "Create a face, then set it Active to start production there. Set it Closed to stop. Shift Incharge can deploy machines only on Active faces.",
@@ -104,43 +125,42 @@ var MODULES = [
               { k: "details", l: "Remarks", t: "textarea" } ],
     flow: true, line: function (r) { return r.category + " face " + r.title + (r.location ? " @ " + r.location : ""); } },
 
+  { id: "plan", icon: "target", label: "Shift plan per face", roles: ["pi"], hint:
+    "Planned quantity for a face in a shift. The dashboard compares it with the trips reported from that face.",
+    fields: [ { k: "record_date", l: "Date", t: "date", today: 1, req: 1 },
+              { k: "shift", l: "Shift", t: "select", o: SHIFTS },
+              { k: "title", l: "Active face", t: "select", dyn: "faces", req: 1 },
+              { k: "category", l: "Material", t: "select", o: MAT }, UNITF,
+              { k: "qty", l: "Planned quantity", t: "number", req: 1, scaled: 1 } ],
+    line: function (r) { return dt(r) + ": " + r.title + " plan " + MCL.fmtQty(r.qty, r.category); } },
+
+  { id: "blast", icon: "alert", label: "Blasting schedule", roles: ["pi", "mm"], hint:
+    "Planned blasts show as a warning on the dashboard until marked Done - all clear.",
+    fields: [ { k: "record_date", l: "Date", t: "date", today: 1, req: 1 },
+              { k: "record_time", l: "Blast time", t: "time", req: 1 },
+              { k: "title", l: "Face / area", t: "select", dyn: "faces", req: 1 },
+              { k: "urgency", l: "Urgency", t: "select", o: URG, d: "High" },
+              { k: "details", l: "Danger zone, guards, siren time", t: "textarea" } ],
+    flow: true, line: function (r) { return r.record_date + " " + r.record_time + " - blast at " + r.title; } },
+
   { id: "assign", icon: "hardhat", label: "Overman assignment", roles: ["shift"], hint:
-    "Assign an Overman to an Active face for a shift. Type the name or ID exactly as the Overman types it when signing in.",
+    "Assign an Overman to an Active face for a shift. The Overman list comes from the Staff list.",
     fields: [ { k: "record_date", l: "Date (night shift after midnight = previous date)", t: "date", today: 1, req: 1 },
               { k: "shift", l: "Shift", t: "select", o: SHIFTS },
               { k: "title", l: "Active face", t: "select", dyn: "faces", req: 1 },
-              { k: "location", l: "Overman name or ID", t: "text", req: 1 },
+              { k: "location", l: "Overman", t: "select", dyn: "overmen", req: 1 },
               { k: "details", l: "Remarks", t: "textarea" } ],
-    line: function (r) { return r.record_date + " Shift " + r.shift + ": " + r.location + " @ " + r.title; } },
-
-  { id: "fleet", icon: "activity", label: "Running fleet status", roles: ["overman", "shift"], auto: 1, hint:
-    "Report a machine working on your face. Use the buttons in the list below to change it to Running, Idle or Off duty. Machine broke down? Use the Breakdowns tab.",
-    fields: [ { k: "location", l: "Face", t: "select", dyn: "auto", req: 1 },
-              { k: "title", l: "Machine ID", t: "text", req: 1 },
-              { k: "category", l: "Machine type", t: "select", o: MTYPES },
-              { k: "status", l: "Status now", t: "select", o: opts(STAT_LABELS.fleet), d: "In progress" },
-              { k: "details", l: "Remarks", t: "textarea" } ],
-    flow: true, line: function (r) { return r.title + " (" + r.category + ") @ " + r.location; } },
-
-  { id: "breakdown", icon: "wrench", label: "Breakdowns", roles: ["overman", "shift"], auto: 1, hint:
-    "Report a machine breakdown. When repair starts or ends, change the status with the buttons below. The machine shows as Breakdown on the dashboard until it is Back in service.",
-    fields: [ { k: "location", l: "Face", t: "select", dyn: "auto", req: 1 },
-              { k: "title", l: "Machine ID (same as in Running fleet status)", t: "text", req: 1 },
-              { k: "category", l: "Machine type", t: "select", o: MTYPES },
-              { k: "urgency", l: "Urgency", t: "select", o: URG, d: "High" },
-              { k: "qty", l: "Hours lost so far (optional)", t: "number" },
-              { k: "details", l: "What went wrong", t: "textarea" } ],
-    flow: true, line: function (r) { return r.title + " (" + r.category + ") @ " + r.location; } },
+    line: function (r) { return dt(r) + ": " + r.location + " @ " + r.title; } },
 
   { id: "deploy", icon: "truck", label: "Fleet deployment", roles: ["shift"], hint:
-    "Pick an Active face and say how many machines of one type are working there this shift. Add one entry for each machine type.",
+    "Pick an Active face and say how many machines of one type work there this shift. Add one entry for each machine type.",
     fields: [ { k: "record_date", l: "Date (night shift after midnight = previous date)", t: "date", today: 1, req: 1 },
               { k: "shift", l: "Shift", t: "select", o: SHIFTS },
               { k: "title", l: "Active face", t: "select", dyn: "faces", req: 1 },
               { k: "category", l: "Machine type", t: "select", o: MTYPES },
               { k: "qty", l: "How many machines", t: "number", req: 1 },
               { k: "details", l: "Remarks", t: "textarea" } ],
-    line: function (r) { return r.record_date + " Shift " + r.shift + ": " + r.qty + " x " + r.category + " @ " + r.title; } },
+    line: function (r) { return dt(r) + ": " + r.qty + " x " + r.category + " @ " + r.title; } },
 
   { id: "machine", icon: "box", label: "Fleet available", roles: ["shift"], hint:
     "How many machines of each type are available (ready to work) in a shift. The newest entry for each shift and type is used.",
@@ -149,199 +169,455 @@ var MODULES = [
               { k: "category", l: "Machine type", t: "select", o: MTYPES },
               { k: "qty", l: "Number available", t: "number", req: 1 },
               { k: "details", l: "Remarks", t: "textarea" } ],
-    line: function (r) { return r.record_date + " Shift " + r.shift + ": " + (r.qty == null ? 1 : r.qty) + " x " + (r.category || r.title) + " available"; } },
+    line: function (r) { return dt(r) + ": " + (r.qty == null ? 1 : r.qty) + " x " + (r.category || r.title) + " available"; } },
 
-  { id: "trip", icon: "route", label: "Trips (current shift)", roles: ["shift", "overman"], hint:
-    "Enter NEW trips counted since your last entry. The dashboard adds them up to estimate this shift.",
-    fields: [ { k: "record_date", l: "Date (night shift after midnight = previous date)", t: "date", today: 1, req: 1 },
-              { k: "shift", l: "Shift", t: "select", o: SHIFTS },
+  { id: "fleet", icon: "activity", label: "Running fleet status", roles: ["overman", "shift"], auto: 1, hint:
+    "Report a machine working on your face. Use the buttons in the list to change it to Running, Idle or Off duty. Broke down? Use Breakdowns.",
+    fields: [ { k: "location", l: "Face", t: "select", dyn: "auto", req: 1 },
+              { k: "title", l: "Machine", t: "select", dyn: "assets", req: 1 },
+              { k: "category", l: "Machine type", t: "select", o: MTYPES },
+              { k: "status", l: "Status now", t: "select", o: opts(STAT_LABELS.fleet), d: "In progress" },
+              { k: "details", l: "Remarks", t: "textarea" } ],
+    flow: true, line: function (r) { return r.title + " (" + r.category + ") @ " + r.location; } },
+
+  { id: "breakdown", icon: "wrench", label: "Breakdowns", roles: ["overman", "shift"], auto: 1, hint:
+    "Report a machine breakdown. Change the status when repair starts or ends. It shows as Breakdown on the dashboard until Back in service.",
+    fields: [ { k: "location", l: "Face", t: "select", dyn: "auto", req: 1 },
+              { k: "title", l: "Machine", t: "select", dyn: "assets", req: 1 },
+              { k: "category", l: "Machine type", t: "select", o: MTYPES },
+              { k: "urgency", l: "Urgency", t: "select", o: URG, d: "High" },
+              { k: "qty", l: "Hours lost so far (optional)", t: "number" },
+              { k: "details", l: "What went wrong", t: "textarea" } ],
+    flow: true, line: function (r) { return r.title + " (" + r.category + ") @ " + r.location; } },
+
+  { id: "hemm", icon: "gauge", label: "HEMM logbook", roles: ["overman", "shift"], auto: 1, hint:
+    "At the end of the shift: working hours and diesel for each machine. Used for availability, utilisation and diesel per tonne.",
+    fields: [ { k: "title", l: "Machine", t: "select", dyn: "assets", req: 1 },
+              { k: "category", l: "Machine type", t: "select", o: MTYPES },
+              { k: "qty", l: "Working hours this shift (0-8)", t: "number", req: 1 },
+              { k: "qty2", l: "Diesel issued (litres)", t: "number" },
+              { k: "details", l: "Remarks", t: "textarea" } ],
+    line: function (r) { return dt(r) + ": " + r.title + " " + r.qty + " h" + (r.qty2 ? ", " + r.qty2 + " L diesel" : ""); } },
+
+  { id: "trip", icon: "route", label: "Trips", roles: ["shift", "overman"], auto: 1, quick: 1, hint:
+    "Use the big buttons for each trip, or type the number of NEW trips since your last entry. The dashboard adds them up.",
+    fields: [ { k: "location", l: "From face", t: "select", dyn: "auto", req: 1 },
               { k: "title", l: "Material", t: "select", o: MAT },
               { k: "qty", l: "Number of trips", t: "number", req: 1 },
-              { k: "qty2", l: "Quantity per trip (tonnes or cu.m)", t: "number", req: 1 },
-              { k: "location", l: "From face", t: "text" } ],
-    line: function (r) { return r.record_date + " " + r.shift + ": " + r.title + " " + r.qty + " trips x " + r.qty2; } },
+              { k: "qty2", l: "Quantity per trip (tonnes or cu.m)", t: "number", req: 1 } ],
+    line: function (r) { return dt(r) + ": " + r.title + " " + r.qty + " trips x " + r.qty2 + (r.location ? " from " + r.location : ""); } },
 
   { id: "production", icon: "factory", label: "Production status", roles: ["shift"], hint:
-    "Enter the final figure of a COMPLETED shift only. One entry per shift per material. Coal in Tonnes (or Million Tonnes), OB in cu.m (or Million cu.m). Pick the unit first.",
+    "Enter the final figure of a COMPLETED shift only. One entry per shift per material. Pick the unit first.",
     fields: [ { k: "record_date", l: "Date (night shift after midnight = previous date)", t: "date", today: 1, req: 1 },
               { k: "shift", l: "Shift", t: "select", o: SHIFTS },
-              { k: "title", l: "Material", t: "select", o: MAT },
-              { k: "_unit", l: "Unit of the quantity", t: "select", virtual: 1, o: [["1","Tonnes (Coal) / cu.m (OB)"],["1000000","Million Tonnes (Coal) / Million cu.m (OB)"]], d: "1" },
+              { k: "title", l: "Material", t: "select", o: MAT }, UNITF,
               { k: "qty", l: "Actual production", t: "number", req: 1, scaled: 1 } ],
-    line: function (r) { return r.record_date + " Shift " + r.shift + ": " + r.title + " " + MCL.fmtQty(r.qty, r.title); } },
+    line: function (r) { return dt(r) + ": " + r.title + " " + MCL.fmtQty(r.qty, r.title); } },
 
-  { id: "hindrance", icon: "alert", label: "Hindrances", roles: ["pi", "shift", "overman", "po", "mm"], hint:
-    "Overman: pick one of your assigned faces. Anything stopping or slowing production. Update the status when it is being solved or is solved.",
-    fields: [ { k: "category", l: "Kind", t: "select", o: ["Machine breakdown","Blasting / drilling","Rain / weather","Land / R&R","Law and order","Power / diesel","Road / haul road","Manpower","Other"].map(function (x) { return [x, x]; }) },
+  { id: "spray", icon: "route", label: "Water spraying", roles: ["shift", "overman"], auto: 1, hint:
+    "Log each round of water spraying on a haul road. The dashboard shows when each road was last sprayed.",
+    fields: [ { k: "location", l: "Haul road / area", t: "text", req: 1 },
+              { k: "record_time", l: "Time sprayed", t: "time", now: 1, req: 1 },
+              { k: "details", l: "Tanker / remarks", t: "text" } ],
+    line: function (r) { return dt(r) + " " + (r.record_time || "") + ": " + r.location; } },
+
+  { id: "handover", icon: "inbox", label: "Shift handover", roles: ["shift"], auto: 1, hint:
+    "Before leaving: what the next shift must know. It shows at the top of the dashboard for the next shift.",
+    fields: [ { k: "title", l: "Summary in one line", t: "text", req: 1 },
+              { k: "urgency", l: "Urgency", t: "select", o: URG, d: "Medium" },
+              { k: "details", l: "Pending issues", t: "textarea" } ],
+    line: function (r) { return dt(r) + ": " + r.title; } },
+
+  { id: "hindrance", icon: "alert", label: "Hindrances", roles: EVERY, hint:
+    "Anything stopping or slowing production. Overman: pick one of your assigned faces. Update the status when it is being solved or is solved.",
+    fields: [ { k: "category", l: "Kind", t: "select", o: list(["Machine breakdown","Blasting / drilling","Rain / weather","Land / R&R","Law and order","Power / diesel","Road / haul road","Manpower","Other"]) },
               { k: "title", l: "Short title", t: "text", req: 1 },
               { k: "location", l: "Location", t: "text", ovFace: 1 },
               { k: "urgency", l: "Urgency", t: "select", o: URG, d: "Medium" },
               { k: "status", l: "Status", t: "select", o: opts(STAT_LABELS.hindrance) },
               { k: "qty", l: "Hours lost so far (optional)", t: "number" },
               { k: "details", l: "Details", t: "textarea" } ],
-    flow: true, line: function (r) { return r.category + ": " + r.title + (r.location ? " @ " + r.location : ""); } }
+    flow: true, line: function (r) { return r.category + ": " + r.title + (r.location ? " @ " + r.location : ""); } },
+
+  { id: "safety", icon: "lock", label: "Safety observations", roles: EVERY, hint:
+    "Report near misses and unsafe acts or conditions. No names of people - describe the situation only.",
+    fields: [ { k: "category", l: "Kind", t: "select", o: list(["Near miss","Unsafe act","Unsafe condition","Good practice"]) },
+              { k: "title", l: "What did you see?", t: "text", req: 1 },
+              { k: "location", l: "Location", t: "text", ovFace: 1 },
+              { k: "urgency", l: "Urgency", t: "select", o: URG, d: "Medium" },
+              { k: "details", l: "Action taken / needed", t: "textarea" } ],
+    flow: true, line: function (r) { return r.category + ": " + r.title + (r.location ? " @ " + r.location : ""); } },
+
+  { id: "audit", icon: "inbox", label: "Audit trail", roles: ["admin", "gm"], view: "audit",
+    hint: "Who added or changed what, and when. Newest first." }
 ];
-var ALL_ROLES = ["admin", "gm"];   // these two see every module
 
-var db = null, role = null, cur = null, uname = "", SETTING = null;
+var db = null, ME = null, cur = null, SETTING = null, EDIT_ID = null;
 var $ = function (id) { return document.getElementById(id); };
-function today() { var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+function tag() { return ME.role + ":" + ME.name; }
+function pad(n) { return String(n).padStart(2, "0"); }
+function today() { var d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+function nowTime() { var d = new Date(); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+function canUse(m) { return ME.role === "admin" || (ME.role === "gm" && m.id !== "staff" && m.id !== "setting") || m.roles.indexOf(ME.role) > -1; }
 
-$("loginArt").innerHTML = MCL.art(); $("lockIc").innerHTML = MCL.icon("lock");
+// ---------- sign-in ----------
 async function start() {
   MCL.renderHeader("entry", null);
+  MCL.translatePage();
+  $("loginArt").innerHTML = MCL.art(); $("lockIc").innerHTML = MCL.icon("lock");
+  $("logout").innerHTML = MCL.icon("logout") + t("Sign out");
   if (!MCL.configReady()) {
     MCL.showMsg($("status"), "info", "The database settings in config.js are not filled in yet. Ask the Data Keeper to paste the Project URL and publishable key.");
     return;
   }
   db = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_PUBLISHABLE_KEY);
   try { SETTING = await MCL.loadSetting(db); MCL.renderHeader("entry", SETTING); }
-  catch (e) { MCL.showMsg($("status"), "err", "Could not reach the database. Has 01-setup.sql been run?", e); }
-  var saved = null;
-  try { saved = sessionStorage.getItem("mclRole"); } catch (e) {}
-  try { uname = saved === "overman" ? (sessionStorage.getItem("mclName") || "") : ""; } catch (e) {}
-  if (saved === "overman" && !uname) saved = null;
-  if (saved && ROLE_NAMES[saved]) { role = saved; showApp(); } else { $("login").hidden = false; }
+  catch (e) { if (navigator.onLine) MCL.showMsg($("status"), "err", "Could not reach the database. Has 01-setup.sql been run?", e); }
+  var s = await db.auth.getSession();
+  if (s.data && s.data.session) await afterSignIn(s.data.session.user.email);
+  else $("login").hidden = false;
+  showQueue();
 }
 
-$("role").onchange = function () { $("nameRow").hidden = $("role").value !== "overman"; };
-$("loginBtn").onclick = async function () {
-  var r = $("role").value, code = $("code").value;
-  if (!code) { MCL.showMsg($("status"), "err", "Please type your passcode."); return; }
-  var nm = $("uname").value.trim();
-  if (r === "overman" && !nm) { MCL.showMsg($("status"), "err", "Overman: please type your name or ID."); return; }
-  if (!db) { MCL.showMsg($("status"), "err", "Database is not connected yet."); return; }
+$("loginForm").onsubmit = async function (ev) {
+  ev.preventDefault();
+  if (!db) return;
+  var b = $("loginBtn"); b.disabled = true; b.textContent = t("Signing in...");
   try {
-    var res = await db.from(T).select("details,created_at").eq("record_type", "user").eq("category", r)
-      .order("created_at", { ascending: true }).limit(1);       // the FIRST passcode row counts
-    if (res.error) throw res.error;
-    if (!res.data.length) { MCL.showMsg($("status"), "err", "No passcode is set for this role. Ask the Data Keeper to run 01-setup.sql."); return; }
-    var h = await MCL.sha256("mcl:" + r + ":" + code);
-    if (h !== res.data[0].details) { MCL.showMsg($("status"), "err", "Wrong passcode. Please try again."); return; }
-    role = r; uname = r === "overman" ? nm : "";
-    try { sessionStorage.setItem("mclRole", r); sessionStorage.setItem("mclName", uname); } catch (e) {}
-    $("code").value = ""; $("status").innerHTML = ""; $("login").hidden = true; showApp();
-  } catch (e) { MCL.showMsg($("status"), "err", "Sign-in failed.", e); }
+    var r = await db.auth.signInWithPassword({ email: $("email").value.trim(), password: $("pass").value });
+    if (r.error) throw r.error;
+    $("pass").value = ""; $("status").innerHTML = "";
+    await afterSignIn(r.data.user.email);
+  } catch (e) { MCL.showMsg($("status"), "err", "Sign-in failed. Check the e-mail and password.", e); }
+  finally { b.disabled = false; b.textContent = t("Sign in"); }
 };
-$("logout").onclick = function () {
-  try { sessionStorage.removeItem("mclRole"); sessionStorage.removeItem("mclName"); } catch (e) {}
-  role = null; uname = ""; $("app").hidden = true; $("login").hidden = false;
+
+async function afterSignIn(email) {
+  try {
+    var r = await db.from(T).select("*").eq("record_type", "staff").order("created_at", { ascending: false });
+    if (r.error) throw r.error;
+    var row = r.data.filter(function (x) { return (x.title || "").toLowerCase() === email.toLowerCase(); })[0];
+    if (!row || row.status === "Resolved") {
+      MCL.showMsg($("status"), "err", "You are signed in as " + email + ", but this e-mail is not active in the Staff list. Ask the Admin to add you.");
+      await db.auth.signOut(); $("login").hidden = false; return;
+    }
+    ME = { email: email, role: row.category, name: row.location || email };
+    showApp(); flushQueue();
+  } catch (e) {
+    if (!navigator.onLine) { MCL.showMsg($("status"), "info", "You are offline. Sign-in will finish when the network is back."); return; }
+    MCL.showMsg($("status"), "err", "Could not load your staff details.", e);
+  }
+}
+$("logout").onclick = async function () {
+  try { await db.auth.signOut(); } catch (e) {}
+  ME = null; $("app").hidden = true; $("login").hidden = false;
 };
 
 function showApp() {
   $("app").hidden = false; $("login").hidden = true;
-  $("who").textContent = ROLE_NAMES[role] + (uname ? " - " + uname : "");
-  $("av").textContent = ROLE_NAMES[role].split(" ").map(function (w) { return w[0]; }).join("").slice(0, 2);
-  var mine = MODULES.filter(function (m) { return ALL_ROLES.indexOf(role) > -1 ? true : m.roles.indexOf(role) > -1; });
+  $("who").textContent = ME.name + " - " + t(ROLE_NAMES[ME.role] || ME.role);
+  $("av").textContent = ME.name.split(" ").map(function (w) { return w[0]; }).join("").slice(0, 2).toUpperCase();
+  var mine = MODULES.filter(canUse);
   $("tabs").innerHTML = "";
   mine.forEach(function (m) {
-    var b = document.createElement("button"); b.innerHTML = MCL.icon(m.icon) + esc(m.label); b.id = "tab-" + m.id;
+    var b = document.createElement("button"); b.innerHTML = MCL.icon(m.icon) + esc(t(m.label)); b.id = "tab-" + m.id;
     b.onclick = function () { openModule(m); }; $("tabs").appendChild(b);
   });
-  openModule(mine[0]);
+  var first = mine.filter(function (m) { return m.id !== "myins"; })[0] || mine[0];
+  openModule(first);
 }
 
-async function faceOptions(kind) {
-  // kind "faces" = all Active faces; "myfaces" = faces assigned to this Overman for the running shift
+// ---------- options loaded from the database ----------
+async function loadOptions(kind) {
   if (kind === "faces") {
     var fr = await db.from(T).select("title,category,location").eq("record_type", "face").eq("status", "In progress").order("created_at", { ascending: false });
     if (fr.error) throw fr.error;
     return fr.data.map(function (x) { return [x.title, x.title + " (" + x.category + (x.location ? ", " + x.location : "") + ")"]; });
   }
-  var n = MCL.mineNow(SETTING);
-  var ar = await db.from(T).select("title,location").eq("record_type", "assign").eq("record_date", n.shiftDate).eq("shift", n.shift).order("created_at", { ascending: false });
-  if (ar.error) throw ar.error;
-  var seen = {}, out = [];
-  ar.data.forEach(function (x) {
-    if ((x.location || "").trim().toLowerCase() === uname.trim().toLowerCase() && !seen[x.title]) { seen[x.title] = 1; out.push([x.title, x.title]); }
-  });
-  return out;
+  if (kind === "myfaces") {
+    var n = MCL.mineNow(SETTING);
+    var ar = await db.from(T).select("title,location").eq("record_type", "assign").eq("record_date", n.shiftDate).eq("shift", n.shift).order("created_at", { ascending: false });
+    if (ar.error) throw ar.error;
+    var seen = {}, out = [];
+    ar.data.forEach(function (x) {
+      if ((x.location || "").trim().toLowerCase() === ME.name.trim().toLowerCase() && !seen[x.title]) { seen[x.title] = 1; out.push([x.title, x.title]); }
+    });
+    return out;
+  }
+  if (kind === "assets") {
+    var mr = await db.from(T).select("title,category").eq("record_type", "asset").neq("status", "Resolved").order("title");
+    if (mr.error) throw mr.error;
+    ASSET_TYPE = {}; mr.data.forEach(function (x) { ASSET_TYPE[x.title] = x.category; });
+    return mr.data.map(function (x) { return [x.title, x.title + " (" + x.category + ")"]; });
+  }
+  if (kind === "overmen") {
+    var sr = await db.from(T).select("title,category,location,status,created_at").eq("record_type", "staff").order("created_at", { ascending: false });
+    if (sr.error) throw sr.error;
+    var latest = {}; sr.data.forEach(function (x) { var k = (x.title || "").toLowerCase(); if (!latest[k]) latest[k] = x; });
+    return Object.keys(latest).map(function (k) { return latest[k]; })
+      .filter(function (x) { return x.category === "overman" && x.status !== "Resolved"; })
+      .map(function (x) { return [x.location, x.location]; });
+  }
+  return [];
 }
+var ASSET_TYPE = {};
+var EMPTY_MSG = {
+  myfaces: "No face is assigned to you for this shift yet. Ask the Shift Incharge to assign you.",
+  faces: "No Active face yet. Ask the Production Incharge to set a face to Active.",
+  overmen: "No Overman in the Staff list yet. Ask the Admin to add them."
+};
 
+// ---------- open a module ----------
 async function openModule(m) {
-  cur = m;
+  cur = m; EDIT_ID = null;
+  Array.prototype.forEach.call($("tabs").children, function (b) { b.className = b.id === "tab-" + m.id ? "on" : ""; });
+  if (m.view) { return openView(m); }
   var F = m._f = m.fields.map(function (f) { return Object.assign({}, f); });
   for (var i = 0; i < F.length; i++) {
     var f = F[i];
-    if (f.ovFace && role === "overman") { f.t = "select"; f.dyn = "myfaces"; f.l = "Your assigned face"; f.req = 1; }
-    if (f.dyn === "auto") f.dyn = role === "overman" ? "myfaces" : "faces";
+    if (f.ovFace && ME.role === "overman") { f.t = "select"; f.dyn = "myfaces"; f.l = "Your assigned face"; f.req = 1; }
+    if (f.dyn === "auto") f.dyn = ME.role === "overman" ? "myfaces" : "faces";
     if (f.dyn) {
-      try { f.o = await faceOptions(f.dyn); }
-      catch (e) { f.o = []; MCL.showMsg($("status"), "err", "Could not load the faces.", e); }
-      f.empty = f.dyn === "myfaces" ? "No face is assigned to you for this shift yet. Ask the Shift Incharge to assign you." : "No Active face yet. Ask the Production Incharge to set a face to Active.";
+      try { f.o = await loadOptions(f.dyn); }
+      catch (e) { f.o = []; MCL.showMsg($("status"), "err", "Could not load a pick list.", e); }
+      if (f.dyn === "assets" && !f.o.length) { f.t = "text"; f.l = "Machine ID (no Machine list yet - type it)"; }
+      else f.empty = EMPTY_MSG[f.dyn];
     }
   }
-  Array.prototype.forEach.call($("tabs").children, function (b) { b.className = b.id === "tab-" + m.id ? "on" : ""; });
-  var h = '<div class="card">' + MCL.h2(m.icon, esc(m.label)) + '<p class="muted">' + esc(m.hint) + '</p><form id="f" class="formgrid">';
+  var h = '<div class="card">' + MCL.h2(m.icon, esc(t(m.label))) + '<p class="muted">' + esc(t(m.hint)) + "</p>";
+  if (m.quick) h += quickPanel(F);
+  h += '<form id="f" class="formgrid">';
   F.forEach(function (f) {
-    h += '<div' + (f.t === "textarea" || f.empty ? ' class="full"' : "") + '><label for="f_' + f.k + '">' + esc(f.l) + (f.req ? " *" : "") + "</label>";
+    h += '<div' + (f.t === "textarea" || (f.empty && !f.o.length) ? ' class="full"' : "") + '><label for="f_' + f.k + '">' + esc(t(f.l)) + (f.req ? " *" : "") + "</label>";
     if (f.t === "select" && !f.o.length) {
-      h += '<div class="msg info">' + esc(f.empty) + '</div><select id="f_' + f.k + '"></select>';
+      h += '<div class="msg info">' + esc(t(f.empty || "Nothing to pick yet.")) + '</div><select id="f_' + f.k + '"></select>';
     } else if (f.t === "select") {
       h += '<select id="f_' + f.k + '">' + f.o.map(function (o) {
-        return '<option value="' + esc(o[0]) + '"' + (o[0] === f.d ? " selected" : "") + ">" + esc(o[1]) + "</option>"; }).join("") + "</select>";
+        return '<option value="' + esc(o[0]) + '"' + (o[0] === f.d ? " selected" : "") + ">" + esc(t(o[1])) + "</option>"; }).join("") + "</select>";
     } else if (f.t === "textarea") { h += '<textarea id="f_' + f.k + '"></textarea>'; }
     else { h += '<input id="f_' + f.k + '" type="' + f.t + '"' + (f.t === "number" ? ' step="any" inputmode="decimal"' : "") +
-           (f.today ? ' value="' + today() + '"' : "") + ">"; }
+           (f.today ? ' value="' + today() + '"' : "") + (f.now ? ' value="' + nowTime() + '"' : "") + ">"; }
     h += "</div>";
   });
-  h += '<div class="full"><button type="submit" id="saveBtn">Save</button></div></form><div id="fmsg"></div></div><div class="card">' + MCL.h2("inbox", "Latest entries", "info") + '<div id="list">Loading...</div></div>';
+  h += '<div class="full"><button type="submit" id="saveBtn">' + t("Save") + '</button><button type="button" class="ghost" id="cancelEdit" hidden>' + t("Cancel editing") + "</button></div></form>" +
+       '<div id="fmsg"></div></div><div class="card">' + MCL.h2("inbox", t("Latest entries"), "info") + '<div id="list">' + t("Loading...") + "</div></div>";
   $("module").innerHTML = h;
   $("f").onsubmit = function (ev) { ev.preventDefault(); save(m); };
+  $("cancelEdit").onclick = function () { stopEdit(m); };
+  var mt = $("f_title"), ty = $("f_category");    // picking a machine fills in its type
+  if (mt && ty && F.some(function (f) { return f.dyn === "assets"; })) {
+    var sync = function () { if (ASSET_TYPE[mt.value]) ty.value = ASSET_TYPE[mt.value]; };
+    mt.onchange = sync; sync();
+  }
+  if (m.quick) wireQuick(m);
   loadList(m);
 }
 
-async function save(m) {
-  var row = { record_type: m.id, entered_by: role === "overman" ? "overman:" + uname : role };
-  if (m.auto) { var n = MCL.mineNow(SETTING); row.record_date = n.shiftDate; row.shift = n.shift; }   // date and shift filled automatically
-  var F = m._f || m.fields, mult = 1;
-  for (var i = 0; i < F.length; i++) {
-    var f = F[i], v = $("f_" + f.k).value.trim();
-    if (f.req && !v) { MCL.showMsg($("fmsg"), "err", "Please fill: " + f.l); return; }
-    if (f.virtual) { mult = Number(v) || 1; continue; }
-    if (v === "") continue;
-    row[f.k] = f.t === "number" ? Number(v) : v;
-  }
-  F.forEach(function (f) { if (f.scaled && row[f.k] != null) row[f.k] = Math.round(row[f.k] * mult * 1000) / 1000; });
-  try {
-    $("saveBtn").disabled = true; $("saveBtn").textContent = "Saving...";
-    var r = await db.from(T).insert(row);
-    if (r.error) throw r.error;
-    MCL.showMsg($("fmsg"), "ok", "Saved.");
-    $("f").reset();
-    F.forEach(function (f) { if (f.today) $("f_" + f.k).value = today(); });
-    loadList(m);
-    if (m.id === "setting") { SETTING = await MCL.loadSetting(db); MCL.renderHeader("entry", SETTING); }
-  } catch (e) { MCL.showMsg($("fmsg"), "err", "Could not save.", e); }
-  finally { var sb = $("saveBtn"); if (sb) { sb.disabled = false; sb.textContent = "Save"; } }   // stops double saving
+// ---------- quick trip buttons ----------
+function quickPanel(F) {
+  var face = F.filter(function (f) { return f.k === "location"; })[0];
+  var saved = MCL.store("mclPayload") || "";
+  return '<div class="quick"><h3>' + t("Quick trip buttons") + '</h3><div class="formgrid">' +
+    '<div><label for="q_face">' + t("Face") + '</label><select id="q_face">' + (face.o || []).map(function (o) { return '<option value="' + esc(o[0]) + '">' + esc(o[1]) + "</option>"; }).join("") + "</select></div>" +
+    '<div><label for="q_mat">' + t("Material") + '</label><select id="q_mat">' + MAT.map(function (o) { return '<option value="' + o[0] + '">' + esc(t(o[1])) + "</option>"; }).join("") + "</select></div>" +
+    '<div class="full"><label for="q_pay">' + t("Quantity per trip (tonnes or cu.m)") + '</label><input id="q_pay" type="number" step="any" inputmode="decimal" value="' + esc(saved) + '"></div></div>' +
+    '<div class="qbtns"><button type="button" data-n="1">+1 ' + t("trip") + '</button><button type="button" data-n="5">+5</button><button type="button" data-n="10">+10</button></div>' +
+    '<div id="qmsg"></div><h3>' + t("Or type it") + "</h3></div>";
+}
+function wireQuick(m) {
+  Array.prototype.forEach.call(document.querySelectorAll(".qbtns button"), function (b) {
+    b.onclick = async function () {
+      var pay = Number($("q_pay").value), face = $("q_face").value;
+      if (!face) { MCL.showMsg($("qmsg"), "err", t("Pick a face first.")); return; }
+      if (!pay) { MCL.showMsg($("qmsg"), "err", t("Type the quantity per trip first.")); return; }
+      MCL.store("mclPayload", String(pay));
+      var n = MCL.mineNow(SETTING);
+      var row = { record_type: "trip", entered_by: tag(), record_date: n.shiftDate, shift: n.shift, location: face, title: $("q_mat").value, qty: Number(b.dataset.n), qty2: pay };
+      b.disabled = true;
+      var res = await insertRow(row, m.label + ": +" + b.dataset.n + " trips");
+      b.disabled = false;
+      MCL.showMsg($("qmsg"), res === "queued" ? "info" : res ? "ok" : "err", res === "queued" ? t("No network - kept on this phone, will send later.") : res ? "+" + b.dataset.n + " " + t("trip(s) saved") + " (" + nowTime() + ")" : t("Could not save."), res && res.error);
+      if (res && res !== "queued") loadList(m);
+    };
+  });
 }
 
+// ---------- save / edit ----------
+function readForm(m) {
+  var F = m._f || m.fields, mult = 1, row = {};
+  for (var i = 0; i < F.length; i++) {
+    var f = F[i], el = $("f_" + f.k), v = el ? el.value.trim() : "";
+    if (f.req && !v) { MCL.showMsg($("fmsg"), "err", t("Please fill:") + " " + t(f.l)); return null; }
+    if (f.virtual) { mult = Number(v) || 1; continue; }
+    row[f.k] = v === "" ? null : (f.t === "number" ? Number(v) : v);
+  }
+  F.forEach(function (f) { if (f.scaled && row[f.k] != null) row[f.k] = Math.round(row[f.k] * mult * 1000) / 1000; });
+  return row;
+}
+async function save(m) {
+  var row = readForm(m); if (!row) return;
+  var b = $("saveBtn"); b.disabled = true; b.textContent = t("Saving...");
+  try {
+    if (EDIT_ID) {
+      var u = await db.from(T).update(row).eq("id", EDIT_ID);
+      if (u.error) throw u.error;
+      logIt(EDIT_ID, "Changed", m.label + ": " + m.line(Object.assign({}, row)));
+      MCL.showMsg($("fmsg"), "ok", t("Changes saved."));
+      stopEdit(m);
+    } else {
+      row.record_type = m.id; row.entered_by = tag();
+      Object.keys(row).forEach(function (k) { if (row[k] === null) delete row[k]; });
+      if (m.auto) { var n = MCL.mineNow(SETTING); row.record_date = n.shiftDate; row.shift = n.shift; }
+      var res = await insertRow(row, m.label + ": " + m.line(row));
+      if (!res) return;
+      MCL.showMsg($("fmsg"), res === "queued" ? "info" : "ok", res === "queued" ? t("No network - kept on this phone, will send later.") : t("Saved."));
+      resetForm(m);
+    }
+    loadList(m);
+    if (m.id === "setting") { SETTING = await MCL.loadSetting(db); MCL.renderHeader("entry", SETTING); }
+  } catch (e) { MCL.showMsg($("fmsg"), "err", t("Could not save."), e); }
+  finally { var sb = $("saveBtn"); if (sb) { sb.disabled = false; sb.textContent = t(EDIT_ID ? "Save changes" : "Save"); } }
+}
+// Insert one row. Returns the new id, "queued" when offline, or null on error (error shown).
+async function insertRow(row, what) {
+  if (!navigator.onLine) { queueRow(row, what); return "queued"; }
+  try {
+    var r = await db.from(T).insert(row).select("id");
+    if (r.error) throw r.error;
+    var id = r.data && r.data[0] && r.data[0].id;
+    logIt(id, "Added", what);
+    return id || true;
+  } catch (e) {
+    if (e instanceof TypeError || /fetch|network/i.test(e.message || "")) { queueRow(row, what); return "queued"; }
+    MCL.showMsg($("fmsg") || $("status"), "err", t("Could not save."), e);
+    return null;
+  }
+}
+function resetForm(m) {
+  $("f").reset();
+  (m._f || m.fields).forEach(function (f) { var el = $("f_" + f.k); if (!el) return; if (f.today) el.value = today(); if (f.now) el.value = nowTime(); });
+}
+function startEdit(m, x) {
+  EDIT_ID = x.id;
+  (m._f || m.fields).forEach(function (f) {
+    var el = $("f_" + f.k); if (!el) return;
+    if (f.virtual) { el.value = "1"; return; }
+    var v = x[f.k] == null ? "" : String(x[f.k]);
+    if (el.tagName === "SELECT" && v && !Array.prototype.some.call(el.options, function (o) { return o.value === v; })) {
+      var o = document.createElement("option"); o.value = v; o.textContent = v; el.appendChild(o);
+    }
+    el.value = v;
+  });
+  $("saveBtn").textContent = t("Save changes"); $("cancelEdit").hidden = false;
+  MCL.showMsg($("fmsg"), "info", t("Editing an entry. Change the boxes and press Save changes."));
+  $("f").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function stopEdit(m) { EDIT_ID = null; resetForm(m); $("saveBtn").textContent = t("Save"); $("cancelEdit").hidden = true; }
+
+// ---------- audit trail ----------
+function logIt(id, action, what) {
+  if (!id || id === true) return;
+  db.from(T).insert({ record_type: "log", title: String(id), category: action, location: String(what || "").slice(0, 300), entered_by: tag() })
+    .then(function () {}, function () {});
+}
+
+// ---------- offline queue: entries wait on the phone until the network is back ----------
+function getQueue() { try { return JSON.parse(MCL.store("mclQueue") || "[]"); } catch (e) { return []; } }
+function setQueue(q) { MCL.store("mclQueue", JSON.stringify(q)); showQueue(); }
+function queueRow(row, what) { var q = getQueue(); q.push({ row: row, what: what }); setQueue(q); }
+function showQueue() {
+  var n = getQueue().length;
+  $("queueMsg").innerHTML = n ? '<div class="msg info">' + n + " " + t("entries are waiting on this phone and will be sent when the network is back.") + "</div>" : "";
+}
+async function flushQueue() {
+  if (!db || !ME || !navigator.onLine) return;
+  var q = getQueue(), left = [];
+  for (var i = 0; i < q.length; i++) {
+    try {
+      var r = await db.from(T).insert(q[i].row).select("id");
+      if (r.error) throw r.error;
+      logIt(r.data && r.data[0] && r.data[0].id, "Added (sent later)", q[i].what);
+    } catch (e) { left.push(q[i]); }
+  }
+  setQueue(left);
+  if (q.length && cur && !cur.view) loadList(cur);
+}
+window.addEventListener("online", function () { flushQueue(); $("status").innerHTML = ""; });
+window.addEventListener("offline", function () { MCL.showMsg($("status"), "info", t("You are offline. New entries will be kept on this phone.")); });
+
+// ---------- latest entries list ----------
 async function loadList(m) {
   try {
-    var r = await db.from(T).select("*").eq("record_type", m.id).order("created_at", { ascending: false }).limit(12);
+    var r = await db.from(T).select("*").eq("record_type", m.id).order("created_at", { ascending: false }).limit(15);
     if (r.error) throw r.error;
-    if (!r.data.length) { $("list").innerHTML = MCL.emptyState("inbox", "Nothing entered yet."); return; }
+    if (!r.data.length) { $("list").innerHTML = MCL.emptyState("inbox", t("Nothing entered yet.")); return; }
     $("list").innerHTML = r.data.map(function (x) {
-      var s = '<div class="item">' + esc(m.line(x));
+      var s = '<div class="item">' + esc(m.line(x)) + '<div class="muted small">' + esc(MCL.timeText(x.created_at)) + (x.entered_by ? " &middot; " + esc(String(x.entered_by).split(":").pop()) : "") + "</div>";
       if (m.flow) {
-        s += ' <span class="badge ' + esc(x.urgency) + '">' + esc(x.urgency) + '</span> <span class="badge st">' +
-             esc((STAT_LABELS[m.id] || {})[x.status] || x.status) + "</span><br>";
-        Object.keys(STAT_LABELS[m.id]).forEach(function (st) {
-          if (st !== x.status) s += '<button class="small alt" data-id="' + x.id + '" data-st="' + st + '">Mark: ' + esc(STAT_LABELS[m.id][st]) + "</button>";
+        s += '<span class="badge ' + esc(x.urgency) + '">' + esc(t(x.urgency)) + '</span> <span class="badge st">' + esc(t((STAT_LABELS[m.id] || {})[x.status] || x.status)) + "</span><br>";
+        Object.keys(STAT_LABELS[m.id] || {}).forEach(function (st) {
+          if (st !== x.status) s += '<button class="small alt" data-id="' + x.id + '" data-st="' + st + '">' + t("Mark:") + " " + esc(t(STAT_LABELS[m.id][st])) + "</button>";
         });
       }
+      if (ME && x.entered_by === tag()) s += '<button class="small ghost" data-edit="' + x.id + '">' + MCL.icon("edit") + t("Edit") + "</button>";
       return s + "</div>";
     }).join("");
     Array.prototype.forEach.call($("list").querySelectorAll("button[data-id]"), function (b) {
       b.onclick = async function () {
+        b.disabled = true;
         try {
           var u = await db.from(T).update({ status: b.dataset.st }).eq("id", b.dataset.id);
           if (u.error) throw u.error;
+          var x = r.data.filter(function (y) { return y.id === b.dataset.id; })[0];
+          logIt(b.dataset.id, "Status: " + (STAT_LABELS[m.id] || {})[b.dataset.st], m.label + ": " + m.line(x));
           loadList(m);
-        } catch (e) { MCL.showMsg($("fmsg"), "err", "Could not update the status.", e); }
+        } catch (e) { b.disabled = false; MCL.showMsg($("fmsg"), "err", t("Could not update the status."), e); }
       };
     });
-  } catch (e) { MCL.showMsg($("list"), "err", "Could not load entries.", e); }
+    Array.prototype.forEach.call($("list").querySelectorAll("button[data-edit]"), function (b) {
+      b.onclick = function () { startEdit(m, r.data.filter(function (y) { return y.id === b.dataset.edit; })[0]); };
+    });
+  } catch (e) { MCL.showMsg($("list"), "err", t("Could not load entries."), e); }
+}
+
+// ---------- view-only modules ----------
+async function openView(m) {
+  $("module").innerHTML = '<div class="card">' + MCL.h2(m.icon, esc(t(m.label))) + '<p class="muted">' + esc(t(m.hint)) + '</p><div id="vlist">' + t("Loading...") + '</div><div id="fmsg"></div></div>';
+  try {
+    if (m.view === "audit") {
+      var a = await db.from(T).select("*").eq("record_type", "log").order("created_at", { ascending: false }).limit(80);
+      if (a.error) throw a.error;
+      $("vlist").innerHTML = a.data.length ? a.data.map(function (x) {
+        return '<div class="item"><b>' + esc(x.category) + "</b> - " + esc(x.location || "") + '<div class="muted small">' + esc(MCL.timeText(x.created_at)) + " &middot; " + esc(String(x.entered_by || "").replace(":", " - ")) + "</div></div>";
+      }).join("") : MCL.emptyState("inbox", t("Nothing recorded yet."));
+      return;
+    }
+    // My instructions
+    var r = await db.from(T).select("*").eq("record_type", "instruction").neq("status", "Resolved").order("created_at", { ascending: false });
+    if (r.error) throw r.error;
+    var me = ROLE_NAMES[ME.role], boss = ["admin", "gm", "po", "mm"].indexOf(ME.role) > -1;
+    var l = r.data.filter(function (x) { return boss || !x.location || x.location === "Everyone" || x.location === "All" || x.location === me; });
+    $("vlist").innerHTML = l.length ? l.map(function (x) {
+      return '<div class="item"><b>' + esc(x.title) + '</b> <span class="badge ' + esc(x.urgency) + '">' + esc(t(x.urgency)) + '</span> <span class="badge st">' + esc(t(STAT_LABELS.instruction[x.status])) + "</span>" +
+        '<div class="muted small">' + t("For") + ": " + esc(x.location || "Everyone") + " &middot; " + esc(MCL.timeText(x.created_at)) + " &middot; " + esc(String(x.entered_by || "").split(":").pop()) + "</div>" +
+        (x.details ? '<div class="small">' + esc(x.details) + "</div>" : "") +
+        (x.status === "Open" ? '<button class="small alt" data-ack="In progress" data-id="' + x.id + '">' + MCL.icon("check") + t("Seen - acting on it") + "</button>" : "") +
+        '<button class="small" data-ack="Resolved" data-id="' + x.id + '">' + t("Done") + "</button></div>";
+    }).join("") : MCL.emptyState("check", t("No open instructions for you."));
+    Array.prototype.forEach.call($("vlist").querySelectorAll("button[data-ack]"), function (b) {
+      b.onclick = async function () {
+        b.disabled = true;
+        try {
+          var u = await db.from(T).update({ status: b.dataset.ack }).eq("id", b.dataset.id);
+          if (u.error) throw u.error;
+          var x = l.filter(function (y) { return y.id === b.dataset.id; })[0];
+          logIt(b.dataset.id, b.dataset.ack === "Resolved" ? "Done" : "Seen", "Instruction: " + (x ? x.title : ""));
+          openView(m);
+        } catch (e) { b.disabled = false; MCL.showMsg($("fmsg"), "err", t("Could not update the status."), e); }
+      };
+    });
+  } catch (e) { MCL.showMsg($("vlist"), "err", t("Could not load entries."), e); }
 }
 start();
 </script>

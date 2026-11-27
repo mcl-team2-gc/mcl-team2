@@ -10,7 +10,8 @@
 
 ## What we are building
 - A tool with at most 3 pages: index.html (entry page), dashboard.html
-  (dashboard) and at most one more page.
+  (dashboard) and metrics.html (charts). Extra views (daily report, TV mode)
+  are modes of dashboard.html, not new pages.
 - Every record has location, urgency (Low / Medium / High) and status
   (Open / In progress / Resolved), plus the columns in "Our tool" below.
 - All data is MADE UP. Never add real names, phone numbers, employee IDs or
@@ -31,7 +32,16 @@
 4. The Project URL and the publishable key live only in config.js. Never use
    or ask for a secret key, a service_role key or the database password.
 5. For charts, load Chart.js from the jsDelivr CDN.
-6. No login or sign-up. Anyone with the link can use the tool.
+6. Sign-in: anyone with the link can VIEW the dashboard and metrics. To ADD or
+   CHANGE data, staff sign in with e-mail + password (Supabase Auth). There is
+   no public sign-up: the Admin adds the person to the Staff list on the site,
+   and the Data Keeper creates the same e-mail in Supabase (Authentication >
+   Users > Add user, "Auto Confirm User" ticked). Roles are checked by the
+   database (function mine_can in 01-setup.sql), not only by the website.
+6b. Other shared files in the top folder: common.js (header, icons, helpers),
+   i18n.js (Hindi/Odia words), style.css, manifest.json + sw.js + icon files
+   (install as an app, offline use). The weather card uses the free
+   Open-Meteo service (only the mine's latitude/longitude is sent).
 7. You may not be able to reach our database. Do NOT try to test the database
    connection. Write the code; we test it on the live website.
 8. If anything fails, show a friendly message on the page that also includes
@@ -43,12 +53,15 @@
 ## Database rules
 - Our Data Keeper runs all SQL by pasting it into the Supabase SQL Editor.
   You cannot run SQL yourself.
-- Give SQL as ONE block that runs in one go. Also save it in the database
-  folder: 01-setup.sql, then 02-..., 03-... for later changes.
+- ALL SQL lives in ONE file: database/01-setup.sql. It must stay safe to run
+  again (create if not exists, where not exists, drop policy if exists).
+  When something changes, update that file and ask the Data Keeper to run it
+  again.
 - One table. It must have: id uuid primary key default gen_random_uuid()
   and created_at timestamptz not null default now().
-- Enable Row Level Security. Add policies that let the roles anon and
-  authenticated SELECT, INSERT and UPDATE. No delete.
+- Enable Row Level Security. anon (not signed in) may only SELECT.
+  authenticated may INSERT and UPDATE only the record types their role allows
+  (function mine_can). The staff list is hidden from anon. No delete.
 - Always include: grant select, insert, update on the table to anon,
   authenticated; (new Supabase projects need it, or the website gets
   "permission denied").
