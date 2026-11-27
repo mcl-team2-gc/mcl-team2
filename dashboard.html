@@ -5,53 +5,92 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0f172a">
   <title>Mine Monitor - Dashboard</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header id="app-header"></header>
 <main>
+  <div class="toolbar no-print" id="toolbar">
+    <label class="datepick"><span data-t>View date</span> <input type="date" id="viewDate"></label>
+    <button class="small alt" id="btnToday" data-t>Today</button>
+    <button class="small alt" id="btnReport"></button>
+    <button class="small alt" id="btnShare"></button>
+    <button class="small alt" id="btnTv"></button>
+  </div>
   <div id="status"></div>
   <div id="board"><div class="card"><span class="muted">Loading the dashboard...</span></div></div>
-  <div class="foot"><span class="muted" id="stamp"></span><button class="ghost" id="refresh"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>Refresh now</button></div>
+  <div class="foot no-print"><span class="muted" id="stamp"></span><button class="ghost" id="refresh"></button></div>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
+<script src="i18n.js"></script>
 <script src="common.js"></script>
 <script>
-var T = MCL.TABLE, esc = MCL.esc, num = MCL.num;
+var T = MCL.TABLE, esc = MCL.esc, num = MCL.num, t = MCL.t;
 var $ = function (id) { return document.getElementById(id); };
-var db = null, busy = false;
+var Q = new URLSearchParams(location.search);
+var VIEW = Q.get("date") || "", TV = Q.get("tv") === "1", REPORT = Q.get("report") === "1";
+var db = null, busy = false, LAST = null, WX = null, WX_AT = 0;
 var UNIT = { Coal: "Tonnes / Million Tonnes", OB: "cu.m / Million cu.m" };
 var FACE_ST = { "Open": "Planned", "In progress": "Active" };
 var HIND_ST = { "Open": "Open", "In progress": "Being solved" };
-var INS_ST = { "Open": "New", "In progress": "Being acted on" };
+var INS_ST = { "Open": "New", "In progress": "Seen - acting on it" };
 var STC = { Running: "Low", Idle: "Medium", Breakdown: "High", "Off duty": "" };
+var SHIFT_ORDER = { A: 0, B: 1, C: 2 };
 
 function sum(rows, f) { return rows.reduce(function (a, r) { return a + (Number(r[f]) || 0); }, 0); }
-function badge(u) { return '<span class="badge ' + esc(u) + '">' + esc(u) + "</span>"; }
-function stBadge(t) { return '<span class="badge st">' + esc(t) + "</span>"; }
+function badge(u) { return '<span class="badge ' + esc(u) + '">' + esc(t(u)) + "</span>"; }
+function stBadge(x) { return '<span class="badge st">' + esc(t(x)) + "</span>"; }
 function bar(p, est) { return '<div class="bar' + (est ? " est" : "") + '"><i style="width:' + Math.max(0, Math.min(100, p)) + '%"></i></div>'; }
-function pct(a, t) { return t > 0 ? a / t * 100 : 0; }
-function empty(t, ic) { return MCL.emptyState(ic || "inbox", t); }
-function sec(ic, t) { return '<div class="section-title">' + MCL.icon(ic) + t + "</div>"; }
+function pct(a, b) { return b > 0 ? a / b * 100 : 0; }
+function empty(x, ic) { return MCL.emptyState(ic || "inbox", t(x)); }
+function sec(ic, x) { return '<div class="section-title">' + MCL.icon(ic) + t(x) + "</div>"; }
+function card(ic, title, tone, body, cls) { return '<div class="card ' + (cls || "") + '">' + MCL.h2(ic, title, tone) + body + "</div>"; }
 function latestTarget(targets, p, m) { return targets.filter(function (r) { return r.category === p && r.title === m; })[0]; }
+function age(iso) { var h = MCL.hoursSince(iso); return h < 1 ? Math.round(h * 60) + " min" : (h < 48 ? num(h, 1) + " h" : Math.round(h / 24) + " days"); }
+function daysIn(ds) { var y = +ds.slice(0, 4), m = +ds.slice(5, 7); return new Date(Date.UTC(y, m, 0)).getUTCDate(); }
+function dayDiff(a, b) { return (Date.UTC(+b.slice(0, 4), +b.slice(5, 7) - 1, +b.slice(8, 10)) - Date.UTC(+a.slice(0, 4), +a.slice(5, 7) - 1, +a.slice(8, 10))) / 86400000; }
 
 // Estimate of the running shift: trips so far + remaining hours x blended rate.
-// Early in the shift we trust past averages; later we trust today's trips.
 function estimate(mat, now, prod, trips) {
-  var tripsT = trips.filter(function (r) { return r.title === mat; })
-    .reduce(function (a, r) { return a + (Number(r.qty) || 0) * (Number(r.qty2) || 0); }, 0);
+  var tripsT = trips.filter(function (r) { return r.title === mat; }).reduce(function (a, r) { return a + (Number(r.qty) || 0) * (Number(r.qty2) || 0); }, 0);
   var byShift = {};
-  prod.filter(function (r) { return r.title === mat; }).forEach(function (r) {
-    var k = r.record_date + r.shift; byShift[k] = (byShift[k] || 0) + (Number(r.qty) || 0);
-  });
+  prod.filter(function (r) { return r.title === mat; }).forEach(function (r) { var k = r.record_date + r.shift; byShift[k] = (byShift[k] || 0) + (Number(r.qty) || 0); });
   var keys = Object.keys(byShift).sort().reverse().slice(0, 10);
   var avgShift = keys.length ? keys.reduce(function (a, k) { return a + byShift[k]; }, 0) / keys.length : 0;
   var histRate = avgShift / 8, el = now.elapsed, w = el / 8;
   var tripRate = el >= 0.25 ? tripsT / el : null;
   var rate = tripRate == null ? histRate : (w * tripRate + (1 - w) * histRate);
   return { value: tripsT + (8 - el) * rate, tripsT: tripsT, avgShift: avgShift, n: keys.length };
+}
+
+// ---------- weather (free Open-Meteo service, only latitude/longitude is sent) ----------
+var WCODE = [[0, "Clear sky", "sun"], [3, "Partly cloudy", "cloud"], [48, "Fog", "cloud"], [57, "Drizzle", "rain"], [67, "Rain", "rain"],
+             [77, "Snow", "cloud"], [82, "Rain showers", "rain"], [99, "Thunderstorm", "storm"]];
+async function weather(s) {
+  if (!s || s.qty == null || s.qty2 == null) return null;
+  if (WX && Date.now() - WX_AT < 30 * 60000) return WX;
+  var url = "https://api.open-meteo.com/v1/forecast?latitude=" + encodeURIComponent(s.qty) + "&longitude=" + encodeURIComponent(s.qty2) +
+    "&current=temperature_2m,relative_humidity_2m,precipitation,weather_code,wind_speed_10m&daily=temperature_2m_max,precipitation_sum,precipitation_probability_max&timezone=auto&forecast_days=1";
+  try { var r = await fetch(url); if (!r.ok) throw new Error("Weather service: " + r.status); WX = await r.json(); WX_AT = Date.now(); return WX; }
+  catch (e) { return { error: e.message || String(e) }; }
+}
+function weatherCard(w) {
+  if (!w) return card("sun", t("Weather"), "info", empty("Admin can add the mine latitude and longitude in Mine name, date, time to see the weather.", "cloud"));
+  if (w.error) return card("sun", t("Weather"), "info", '<div class="msg err">' + t("Weather not available right now.") + "<br><small>" + esc(w.error) + "</small></div>");
+  var c = w.current || {}, d = w.daily || {}, code = c.weather_code || 0, wc = WCODE.filter(function (x) { return code <= x[0]; })[0] || WCODE[0];
+  var rainP = (d.precipitation_probability_max || [0])[0] || 0, tmax = (d.temperature_2m_max || [0])[0] || 0, warn = [];
+  if (rainP >= 60) warn.push(t("Rain likely today - check haul roads, drainage and benches."));
+  if (tmax >= 40) warn.push(t("Heat alert - water, shade and rest breaks for workers."));
+  if (code >= 95) warn.push(t("Thunderstorm - follow lightning safety rules."));
+  return card(wc[2], t("Weather"), "info", '<div class="wx"><div class="wx-big">' + MCL.icon(wc[2]) + "<b>" + num(c.temperature_2m, 0) + "&deg;C</b></div>" +
+    "<div>" + t(wc[1]) + '<div class="muted small">' + t("Humidity") + " " + num(c.relative_humidity_2m, 0) + "% &middot; " + t("Wind") + " " + num(c.wind_speed_10m, 0) + " km/h<br>" +
+    t("Today: max") + " " + num(tmax, 0) + "&deg;C &middot; " + t("rain chance") + " " + num(rainP, 0) + "% (" + num((d.precipitation_sum || [0])[0], 1) + " mm)</div></div></div>" +
+    warn.map(function (x) { return '<div class="msg info">' + x + "</div>"; }).join(""));
 }
 
 async function load() {
@@ -64,158 +103,314 @@ async function load() {
   busy = true; $("refresh").disabled = true;
   db = db || window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_PUBLISHABLE_KEY);
   try {
-    var setting = await MCL.loadSetting(db), now = MCL.renderHeader("dash", setting);
-    var fy = MCL.fyStart(now.shiftDate), month = now.shiftDate.slice(0, 8) + "01";
-    // Only 3 requests: production this year, today's shift records, and everything still open.
-    var res = await Promise.all([
-      MCL.fetchAll(function () { return db.from(T).select("id,title,qty,shift,record_date").eq("record_type", "production").gte("record_date", fy).order("id"); }),
-      MCL.fetchAll(function () { return db.from(T).select("*").in("record_type", ["trip", "machine", "deploy", "assign", "fleet"]).eq("record_date", now.shiftDate).order("created_at", { ascending: false }).order("id"); }),
-      MCL.fetchAll(function () { return db.from(T).select("*").in("record_type", ["target", "face", "hindrance", "instruction", "breakdown"]).neq("status", "Resolved").order("created_at", { ascending: false }).order("id"); })
-    ]);
+    var setting = await MCL.loadSetting(db), real = MCL.renderHeader("dash", setting), now = real;
+    if (VIEW) now = { date: VIEW, shiftDate: VIEW, shift: null, elapsed: 8, time: "24:00", tz: real.tz, name: real.name, past: true };
+    var D = now.shiftDate, fy = MCL.fyStart(D), month = D.slice(0, 8) + "01", yday = MCL.addDays(D, -1);
+    var reqs = [
+      MCL.fetchAll(function () { return db.from(T).select("id,title,qty,shift,record_date").eq("record_type", "production").gte("record_date", fy).lte("record_date", D).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("*").in("record_type", ["trip", "machine", "deploy", "assign", "fleet", "plan", "blast", "spray", "handover", "hemm"]).gte("record_date", yday).lte("record_date", D).order("created_at", { ascending: false }).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("*").in("record_type", ["target", "face", "hindrance", "instruction", "breakdown", "safety", "asset"]).neq("status", "Resolved").order("created_at", { ascending: false }).order("id"); })
+    ];
+    if (REPORT || VIEW) reqs.push(MCL.fetchAll(function () { return db.from(T).select("*").in("record_type", ["hindrance", "safety", "breakdown"]).gte("created_at", MCL.addDays(D, -1) + "T00:00:00Z").lte("created_at", MCL.addDays(D, 1) + "T23:59:59Z").order("id"); }));
+    var res = await Promise.all(reqs);
     function pick(rows, type) { return rows.filter(function (r) { return r.record_type === type; }); }
-    var today = res[1], open = res[2];
-    var trips = pick(today, "trip").filter(function (r) { return r.shift === now.shift; });
-    var machines = pick(today, "machine"), deploys = pick(today, "deploy"), assigns = pick(today, "assign"), fleet = pick(today, "fleet");
-    var targets = pick(open, "target"), faces = pick(open, "face"), hind = pick(open, "hindrance"), ins = pick(open, "instruction"), bdowns = pick(open, "breakdown");
-    // "till previous shift": leave out the shift that is running now
-    var prod = res[0].filter(function (r) { return !(r.record_date === now.shiftDate && r.shift === now.shift); });
+    var near = res[1], dayRows = near.filter(function (r) { return r.record_date === D; }), open = res[2];
+    var trips = pick(dayRows, "trip"), curTrips = trips.filter(function (r) { return r.shift === now.shift; });
+    var machines = pick(dayRows, "machine"), deploys = pick(dayRows, "deploy"), assigns = pick(dayRows, "assign"), fleet = pick(dayRows, "fleet");
+    var plans = pick(dayRows, "plan"), blasts = pick(dayRows, "blast"), sprays = pick(dayRows, "spray"), hemm = pick(dayRows, "hemm");
+    var handovers = pick(near, "handover");
+    var targets = pick(open, "target"), faces = pick(open, "face"), hind = pick(open, "hindrance"), ins = pick(open, "instruction");
+    var bdowns = pick(open, "breakdown"), safety = pick(open, "safety"), assets = pick(open, "asset");
+    var prod = res[0].filter(function (r) { return now.past || !(r.record_date === D && r.shift === now.shift); });
+    var dayLog = res[3] ? res[3].filter(function (r) { return MCL.zoneDate(r.created_at, now.tz) === D; }) : null;
 
-    // ---- work out the numbers first ----
+    // who has seen the instructions (from the audit trail)
+    var seenBy = {};
+    if (ins.length) {
+      var lg = await db.from(T).select("title,category,entered_by,created_at").eq("record_type", "log").in("title", ins.map(function (r) { return r.id; })).order("created_at");
+      if (!lg.error) lg.data.forEach(function (l) { (seenBy[l.title] = seenBy[l.title] || []).push(String(l.entered_by || "").split(":").pop() + " (" + l.category + ")"); });
+    }
+
+    // ---- numbers ----
+    var shiftsDone = now.past ? 3 : SHIFT_ORDER[now.shift];
+    var dom = +D.slice(8, 10), DIM = daysIn(D), mDone = dom - 1 + shiftsDone / 3;
+    var fyDays = dayDiff(fy, MCL.addDays(MCL.fyStart(MCL.addDays(fy, 400)), 0)), fyDone = dayDiff(fy, D) + shiftsDone / 3;
     var P = {};
     ["Coal", "OB"].forEach(function (mat) {
       var mp = prod.filter(function (r) { return r.title === mat; });
-      var act = {
-        Daily: sum(mp.filter(function (r) { return r.record_date === now.shiftDate; }), "qty"),
-        Monthly: sum(mp.filter(function (r) { return r.record_date >= month; }), "qty"),
-        Annual: sum(mp, "qty")
-      };
-      var tg = {}; ["Daily", "Monthly", "Annual"].forEach(function (p) { var t = latestTarget(targets, p, mat); tg[p] = t ? Number(t.qty) : 0; });
-      var est = estimate(mat, now, prod, trips);
-      P[mat] = { act: act, tg: tg, est: est, dayEst: act.Daily + est.value };
+      var act = { Daily: sum(mp.filter(function (r) { return r.record_date === D; }), "qty"),
+                  Monthly: sum(mp.filter(function (r) { return r.record_date >= month; }), "qty"), Annual: sum(mp, "qty") };
+      var tg = {}; ["Daily", "Monthly", "Annual"].forEach(function (p) { var x = latestTarget(targets, p, mat); tg[p] = x ? Number(x.qty) : 0; });
+      var est = now.past ? { value: 0, tripsT: 0, avgShift: 0, n: 0 } : estimate(mat, now, prod, curTrips);
+      P[mat] = { act: act, tg: tg, est: est, dayEst: act.Daily + est.value,
+        mFore: mDone > 0 ? act.Monthly / mDone * DIM : 0, mNeed: tg.Monthly ? Math.max(0, tg.Monthly - act.Monthly) / Math.max(0.34, DIM - mDone) : 0,
+        yFore: fyDone > 0 ? act.Annual / fyDone * fyDays : 0, yNeed: tg.Annual ? Math.max(0, tg.Annual - act.Annual) / Math.max(0.34, fyDays - fyDone) : 0 };
     });
     var down = {}; bdowns.forEach(function (r) { down[(r.title || "").toLowerCase()] = r; });
     var seenM = {}, fl = [];
-    fleet.forEach(function (r) {   // newest entry for each machine wins
+    fleet.forEach(function (r) {
       var k = (r.title || "").toLowerCase(); if (seenM[k]) return; seenM[k] = 1;
-      fl.push({ id: r.title, type: r.category, face: r.location,
-                state: down[k] ? "Breakdown" : (r.status === "In progress" ? "Running" : (r.status === "Open" ? "Idle" : "Off duty")) });
+      fl.push({ id: r.title, type: r.category, face: r.location, state: down[k] ? "Breakdown" : (r.status === "In progress" ? "Running" : (r.status === "Open" ? "Idle" : "Off duty")) });
     });
     bdowns.forEach(function (r) { var k = (r.title || "").toLowerCase(); if (!seenM[k]) { seenM[k] = 1; fl.push({ id: r.title, type: r.category, face: r.location, state: "Breakdown" }); } });
     var cnt = { Running: 0, Idle: 0, Breakdown: 0, "Off duty": 0 }; fl.forEach(function (m) { cnt[m.state]++; });
     var activeFaces = faces.filter(function (r) { return r.status === "In progress"; });
+    var fleetSize = assets.length || fl.length, availNow = fleetSize ? pct(fleetSize - bdowns.length, fleetSize) : null;
+    var utilNow = fleetSize - bdowns.length > 0 ? pct(cnt.Running, fleetSize - bdowns.length) : null;
+    // escalation: High urgency, still open, older than 2 hours
+    var esc2 = hind.concat(bdowns, safety).filter(function (r) { return r.urgency === "High" && MCL.hoursSince(r.created_at) >= 2; });
+    var escIds = {}; esc2.forEach(function (r) { escIds[r.id] = 1; });
+    var openBlasts = blasts.filter(function (r) { return r.status !== "Resolved"; });
+    var curKey = D + (now.shift ? SHIFT_ORDER[now.shift] : 9);
+    var handover = handovers.filter(function (r) { return (r.record_date + SHIFT_ORDER[r.shift]) < curKey; }).sort(function (a, b) { return a.created_at < b.created_at ? 1 : -1; })[0];
+
+    LAST = { now: now, P: P, cnt: cnt, fl: fl, hind: hind, bdowns: bdowns, openBlasts: openBlasts, activeFaces: activeFaces, safety: safety, prod: prod, D: D, dayLog: dayLog, handover: handover, ins: ins, name: real.name };
+    if (REPORT) { $("board").innerHTML = reportHtml(LAST); finish(); return; }
 
     var h = "";
-    // ---- 0. Banner: running shift ----
-    var left = Math.max(0, 8 - now.elapsed), lh = Math.floor(left), lm = Math.round((left - lh) * 60);
-    if (lm === 60) { lh++; lm = 0; }
-    var hr = +now.time.slice(0, 2), greet = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
-    h += '<div class="hero">' + MCL.art() + '<div class="hero-in"><div class="eyebrow">' + greet + " &middot; " + esc(MCL.prettyDate(now.date)) + "</div>" +
-      "<h2>Shift " + now.shift + " is running</h2><p>" + lh + " h " + lm + " min left in this shift</p>" + bar(now.elapsed / 8 * 100) +
-      '<div class="pills"><span class="pill">' + MCL.icon("truck") + cnt.Running + (cnt.Running === 1 ? " machine" : " machines") + " running</span>" +
-      '<span class="pill">' + MCL.icon("pickaxe") + activeFaces.length + (activeFaces.length === 1 ? " active face" : " active faces") + "</span>" +
-      (cnt.Breakdown ? '<span class="pill">' + MCL.icon("wrench") + cnt.Breakdown + " breakdown" + (cnt.Breakdown > 1 ? "s" : "") + "</span>" : "") + "</div></div></div>";
+    if (now.past) h += '<div class="msg info">' + t("Showing a past date:") + " <b>" + esc(MCL.prettyDate(D)) + "</b>. " + t("Production, trips and fleet are for that day. Faces, hindrances and instructions show their state now.") + "</div>";
 
-    // ---- 1. Summary strip ----
-    function dayTile(mat, label) {
-      var p = P[mat], q = function (n) { return MCL.fmtQty(n, mat); }, t = p.tg.Daily;
-      var v = t ? pct(p.dayEst, t) : null;
-      return MCL.kpi(label + " today (expected)", v == null ? q(p.dayEst) : num(v, 0) + "%",
-        t ? q(p.dayEst) + " of " + q(t) : "no daily target set", v == null ? "info" : v >= 95 ? "ok" : v >= 75 ? "warn" : "bad", mat === "Coal" ? "coal" : "layers");
-    }
-    function monthTile(mat, label) {
-      var p = P[mat], q = function (n) { return MCL.fmtQty(n, mat); }, t = p.tg.Monthly;
-      return MCL.kpi(label + " this month", t ? num(pct(p.act.Monthly, t), 1) + "%" : q(p.act.Monthly), t ? q(p.act.Monthly) + " of " + q(t) : "no monthly target set", "info", "target");
-    }
-    h += '<div class="kpis">' + dayTile("Coal", "Coal") + dayTile("OB", "OB") + monthTile("Coal", "Coal") + monthTile("OB", "OB") +
-      MCL.kpi("Fleet running", cnt.Running + " / " + fl.length, cnt.Idle + " idle", "ok", "truck") +
-      MCL.kpi("Breakdowns", String(cnt.Breakdown), num(sum(bdowns, "qty"), 1) + " hours lost", cnt.Breakdown ? "bad" : "ok", "wrench") +
-      MCL.kpi("Open hindrances", String(hind.length), hind.filter(function (r) { return r.urgency === "High"; }).length + " high urgency", hind.length ? "warn" : "ok", "alert") +
-      MCL.kpi("Active faces", String(activeFaces.length), faces.length - activeFaces.length + " planned", "info", "pickaxe") + "</div>";
+    // ---- alerts ----
+    if (openBlasts.length) h += '<div class="alert blast">' + MCL.icon("alert") + "<div><b>" + t("Blasting today") + "</b><br>" + openBlasts.map(function (r) {
+      return esc(r.record_time || "") + " - " + esc(r.title) + " (" + esc(t(r.status === "Open" ? "Planned" : "Area cleared / firing")) + ")" + (r.details ? " - " + esc(r.details) : ""); }).join("<br>") + "</div></div>";
+    if (esc2.length) h += '<div class="alert urgent">' + MCL.icon("alert") + "<div><b>" + esc2.length + " " + t("urgent item(s) open for more than 2 hours") + "</b><br>" + esc2.map(function (r) {
+      return esc(t({ hindrance: "Hindrance", breakdown: "Breakdown", safety: "Safety" }[r.record_type])) + ": " + esc(r.title) + (r.location ? " @ " + esc(r.location) : "") + " - " + t("open") + " " + age(r.created_at); }).join("<br>") + "</div></div>";
 
-    // ---- 2. Instructions ----
-    if (ins.length) {
-      h += '<div class="card instr">' + MCL.h2("megaphone", "Instructions from management " + stBadge(ins.length + " open"), "bad") + ins.map(function (r) {
-        return '<div class="item"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + " " + stBadge(INS_ST[r.status]) +
-          '<div class="muted">For: ' + esc(r.location || "Everyone") + "</div>" +
-          (r.details ? "<div>" + esc(r.details) + "</div>" : "") + "</div>"; }).join("") + "</div>";
+    // ---- banner ----
+    if (!now.past) {
+      var left = Math.max(0, 8 - now.elapsed), lh = Math.floor(left), lm = Math.round((left - lh) * 60); if (lm === 60) { lh++; lm = 0; }
+      var hr = +now.time.slice(0, 2), greet = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
+      h += '<div class="hero">' + MCL.art() + '<div class="hero-in"><div class="eyebrow">' + t(greet) + " &middot; " + esc(MCL.prettyDate(now.date)) + "</div>" +
+        "<h2>" + t("Shift") + " " + now.shift + " " + t("is running") + "</h2><p>" + lh + " h " + lm + " min " + t("left in this shift") + "</p>" + bar(now.elapsed / 8 * 100) +
+        '<div class="pills"><span class="pill">' + MCL.icon("truck") + cnt.Running + " " + t(cnt.Running === 1 ? "machine running" : "machines running") + "</span>" +
+        '<span class="pill">' + MCL.icon("pickaxe") + activeFaces.length + " " + t(activeFaces.length === 1 ? "active face" : "active faces") + "</span>" +
+        (cnt.Breakdown ? '<span class="pill">' + MCL.icon("wrench") + cnt.Breakdown + " " + t("breakdown(s)") + "</span>" : "") + "</div></div></div>";
     }
+    if (handover) h += card("inbox", t("Handover from Shift") + " " + esc(handover.shift) + " (" + esc(MCL.prettyDate(handover.record_date)) + ")", "info",
+      "<b>" + esc(handover.title) + "</b> " + badge(handover.urgency) + (handover.details ? '<div class="small">' + esc(handover.details) + "</div>" : "") +
+      '<div class="muted small">' + esc(String(handover.entered_by || "").split(":").pop()) + " &middot; " + esc(MCL.timeText(handover.created_at)) + "</div>");
 
-    // ---- 3. Production vs target ----
+    // ---- KPI tiles ----
+    function q(mat) { return function (n) { return MCL.fmtQty(n, mat); }; }
+    function dayTile(mat) {
+      var p = P[mat], f = q(mat), tg = p.tg.Daily, v = tg ? pct(p.dayEst, tg) : null;
+      return MCL.kpi(t(mat) + " " + t(now.past ? "on this day" : "today (expected)"), v == null ? f(p.dayEst) : num(v, 0) + "%", tg ? f(p.dayEst) + " " + t("of") + " " + f(tg) : t("no daily target set"),
+        v == null ? "info" : v >= 95 ? "ok" : v >= 75 ? "warn" : "bad", mat === "Coal" ? "coal" : "layers");
+    }
+    function foreTile(mat) {
+      var p = P[mat], f = q(mat), tg = p.tg.Monthly;
+      return MCL.kpi(t(mat) + " " + t("month-end forecast"), tg ? num(pct(p.mFore, tg), 0) + "%" : f(p.mFore),
+        tg ? f(p.mFore) + " " + t("of") + " " + f(tg) + "<br>" + t("Need") + " " + f(p.mNeed) + " " + t("per day") : t("no monthly target set"),
+        !tg ? "info" : p.mFore >= tg ? "ok" : p.mFore >= 0.9 * tg ? "warn" : "bad", "target");
+    }
+    h += '<div class="kpis">' + dayTile("Coal") + dayTile("OB") + foreTile("Coal") + foreTile("OB") +
+      MCL.kpi(t("Fleet running"), cnt.Running + " / " + fl.length, cnt.Idle + " " + t("idle"), "ok", "truck") +
+      MCL.kpi(t("Availability now"), availNow == null ? "-" : num(availNow, 0) + "%", t("Utilisation") + " " + (utilNow == null ? "-" : num(utilNow, 0) + "%"), availNow == null ? "info" : availNow >= 85 ? "ok" : availNow >= 70 ? "warn" : "bad", "gauge") +
+      MCL.kpi(t("Breakdowns"), String(cnt.Breakdown), num(sum(bdowns, "qty"), 1) + " " + t("hours lost"), cnt.Breakdown ? "bad" : "ok", "wrench") +
+      MCL.kpi(t("Open hindrances"), String(hind.length), hind.filter(function (r) { return r.urgency === "High"; }).length + " " + t("high urgency"), hind.length ? "warn" : "ok", "alert") +
+      MCL.kpi(t("Safety observations open"), String(safety.length), safety.filter(function (r) { return r.urgency === "High"; }).length + " " + t("high urgency"), safety.length ? "warn" : "ok", "shield") +
+      MCL.kpi(t("Active faces"), String(activeFaces.length), (faces.length - activeFaces.length) + " " + t("planned"), "info", "pickaxe") +
+      MCL.kpi(t("Blasts today"), String(blasts.length), openBlasts.length + " " + t("not yet done"), openBlasts.length ? "warn" : "ok", "alert") +
+      MCL.kpi(t("Open instructions"), String(ins.length), ins.filter(function (r) { return r.status === "Open"; }).length + " " + t("not yet seen"), ins.length ? "warn" : "ok", "megaphone") + "</div>";
+
+    // ---- instructions ----
+    if (ins.length) h += card("megaphone", t("Instructions from management") + " " + stBadge(ins.length + " " + t("open")), "bad", ins.map(function (r) {
+      return '<div class="item' + (r.urgency === "High" && r.status === "Open" ? " escalate" : "") + '"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + " " + stBadge(INS_ST[r.status]) +
+        '<div class="muted small">' + t("For") + ": " + esc(r.location || "Everyone") + " &middot; " + t("from") + " " + esc(String(r.entered_by || "").split(":").pop()) + " &middot; " + age(r.created_at) + " " + t("ago") + "</div>" +
+        (r.details ? '<div class="small">' + esc(r.details) + "</div>" : "") +
+        (seenBy[r.id] ? '<div class="small seen">' + MCL.icon("check") + t("Seen by") + ": " + esc(seenBy[r.id].join(", ")) + "</div>" : "") + "</div>"; }).join(""), "instr");
+
+    // ---- production ----
     h += sec("factory", "Production") + '<div class="grid two">';
     ["Coal", "OB"].forEach(function (mat) {
-      var p = P[mat], q = function (n) { return MCL.fmtQty(n, mat); };
-      h += '<div class="card">' + MCL.h2(mat === "Coal" ? "coal" : "layers", (mat === "Coal" ? "Coal production" : "OB removal") + ' <span class="muted small">' + UNIT[mat] + "</span>", mat === "Coal" ? "dark" : "");
+      var p = P[mat], f = q(mat);
+      var body = "";
       ["Daily", "Monthly", "Annual"].forEach(function (per) {
         var tv = p.tg[per], a = p.act[per];
-        h += '<div class="prow"><div class="prow-h"><span>' + per + "</span><b>" + (tv ? num(pct(a, tv), 1) + "%" : "-") + "</b></div>" + bar(pct(a, tv)) +
-             '<div class="muted small">' + q(a) + " of " + (tv ? q(tv) : "no target set") + "</div></div>";
+        body += '<div class="prow"><div class="prow-h"><span>' + t(per) + "</span><b>" + (tv ? num(pct(a, tv), 1) + "%" : "-") + "</b></div>" + bar(pct(a, tv)) +
+          '<div class="muted small">' + f(a) + " " + t("of") + " " + (tv ? f(tv) : t("no target set")) + "</div>" +
+          (per === "Monthly" && tv ? '<div class="small rr">' + MCL.icon("route") + t("Need") + " <b>" + f(p.mNeed) + "</b> " + t("per day for the rest of the month. At this pace:") + " <b>" + f(p.mFore) + "</b> (" + num(pct(p.mFore, tv), 0) + "%)</div>" : "") +
+          (per === "Annual" && tv ? '<div class="small rr">' + MCL.icon("route") + t("Need") + " <b>" + f(p.yNeed) + "</b> " + t("per day for the rest of the year. At this pace:") + " <b>" + f(p.yFore) + "</b> (" + num(pct(p.yFore, tv), 0) + "%)</div>" : "") + "</div>";
       });
-      h += '<div class="estbox"><div class="prow-h"><span>' + MCL.icon("gauge") + " Running shift " + now.shift + " - estimate</span></div>" +
-           '<div class="big">' + q(p.est.value) + '</div><div class="muted small">expected by shift end</div>' + bar(p.tg.Daily ? pct(p.dayEst, p.tg.Daily) : 0, true) +
-           '<div class="muted small">Day total with estimate: <b>' + q(p.dayEst) + "</b>" + (p.tg.Daily ? " of " + q(p.tg.Daily) : "") + ".</div>" +
-           '<details class="small"><summary class="muted">How is this worked out?</summary><div class="muted">Trips so far (' + q(p.est.tripsT) +
-           ") + hours left x a rate. The rate mixes today's trip speed with the average of the last " + p.est.n + " shifts (" + q(p.est.avgShift) +
-           " per shift). Today's trips count more as the shift goes on.</div></details></div></div>";
+      if (!now.past) body += '<div class="estbox"><div class="prow-h"><span>' + MCL.icon("gauge") + " " + t("Running shift") + " " + now.shift + " - " + t("estimate") + "</span></div>" +
+        '<div class="big">' + f(p.est.value) + '</div><div class="muted small">' + t("expected by shift end") + "</div>" + bar(p.tg.Daily ? pct(p.dayEst, p.tg.Daily) : 0, true) +
+        '<div class="muted small">' + t("Day total with estimate:") + " <b>" + f(p.dayEst) + "</b>" + (p.tg.Daily ? " " + t("of") + " " + f(p.tg.Daily) : "") + ".</div>" +
+        '<details class="small"><summary class="muted">' + t("How is this worked out?") + '</summary><div class="muted">' + t("Trips so far") + " (" + f(p.est.tripsT) + ") + " +
+        t("hours left x a rate. The rate mixes today's trip speed with the average of the last") + " " + p.est.n + " " + t("shifts") + " (" + f(p.est.avgShift) + " " + t("per shift") + ").</div></details></div>";
+      h += card(mat === "Coal" ? "coal" : "layers", t(mat === "Coal" ? "Coal production" : "OB removal") + ' <span class="muted small">' + UNIT[mat] + "</span>", mat === "Coal" ? "dark" : "", body);
     });
     h += "</div>";
 
-    // ---- 4. Faces ----
+    // ---- plan vs actual by face (trips) ----
+    var pv = {};
+    plans.forEach(function (r) { var k = r.shift + "|" + r.title; (pv[k] = pv[k] || { shift: r.shift, face: r.title, mat: r.category, plan: 0, act: 0 }).plan += Number(r.qty) || 0; });
+    trips.forEach(function (r) { var k = r.shift + "|" + (r.location || "-"); (pv[k] = pv[k] || { shift: r.shift, face: r.location || "-", mat: r.title, plan: 0, act: 0 }).act += (Number(r.qty) || 0) * (Number(r.qty2) || 0); });
+    var pvl = Object.keys(pv).map(function (k) { return pv[k]; }).sort(function (a, b) { return (a.shift + a.face) < (b.shift + b.face) ? -1 : 1; });
+    h += card("target", t("Plan vs actual by face") + ' <span class="muted small">' + t("actual from trips") + "</span>", "info", pvl.length ?
+      '<div class="scroll"><table class="table"><tr><th>' + t("Shift") + "</th><th>" + t("Face") + "</th><th>" + t("Plan") + "</th><th>" + t("Actual") + "</th><th>%</th></tr>" + pvl.map(function (x) {
+        var pc = x.plan ? pct(x.act, x.plan) : null;
+        return "<tr" + (x.shift === now.shift ? ' class="now-row"' : "") + "><td><b>" + esc(x.shift) + "</b></td><td>" + esc(x.face) + "</td><td>" + (x.plan ? MCL.fmtQty(x.plan, x.mat) : "-") + "</td><td>" + MCL.fmtQty(x.act, x.mat) + "</td><td>" +
+          (pc == null ? "-" : '<span class="badge ' + (pc >= 95 ? "Low" : pc >= 75 ? "Medium" : "High") + '">' + num(pc, 0) + "%</span>") + "</td></tr>"; }).join("") + "</table></div>"
+      : empty("No shift plan or trips for this day yet.", "target"));
+
+    // ---- faces ----
     h += sec("pickaxe", "Working faces") + '<div class="grid two">';
     ["Coal", "OB"].forEach(function (mat) {
       var l = faces.filter(function (r) { return r.category === mat; });
-      h += '<div class="card">' + MCL.h2(mat === "Coal" ? "coal" : "layers", (mat === "Coal" ? "Coal faces" : "OB faces") + " " + stBadge(l.filter(function (r) { return r.status === "In progress"; }).length + " active"), mat === "Coal" ? "dark" : "") +
-        (l.length ? l.map(function (r) {
-          return '<div class="item"><b>' + esc(r.title) + "</b> " + '<span class="badge ' + (r.status === "In progress" ? "Low" : "") + '">' + esc(FACE_ST[r.status]) + "</span>" +
-            (r.urgency !== "Low" ? " " + badge(r.urgency) : "") +
-            (r.location ? '<div class="muted">' + esc(r.location) + "</div>" : "") + (r.details ? '<div class="small">' + esc(r.details) + "</div>" : "") + "</div>"; }).join("")
-          : empty("No faces entered.", "pickaxe")) + "</div>";
+      h += card(mat === "Coal" ? "coal" : "layers", t(mat === "Coal" ? "Coal faces" : "OB faces") + " " + stBadge(l.filter(function (r) { return r.status === "In progress"; }).length + " " + t("active")), mat === "Coal" ? "dark" : "",
+        l.length ? l.map(function (r) {
+          return '<div class="item"><b>' + esc(r.title) + '</b> <span class="badge ' + (r.status === "In progress" ? "Low" : "") + '">' + esc(t(FACE_ST[r.status])) + "</span>" + (r.urgency !== "Low" ? " " + badge(r.urgency) : "") +
+            (r.location ? '<div class="muted">' + esc(r.location) + "</div>" : "") + (r.details ? '<div class="small">' + esc(r.details) + "</div>" : "") + "</div>"; }).join("") : empty("No faces entered.", "pickaxe"));
     });
     h += "</div>";
 
-    // ---- 5. Fleet ----
-    h += sec("truck", "Fleet - " + esc(MCL.prettyDate(now.shiftDate))) + '<div class="grid two">';
+    // ---- fleet ----
+    h += sec("truck", t("Fleet") + " - " + esc(MCL.prettyDate(D))) + '<div class="grid two">';
     var faceSet = {}; fl.forEach(function (m) { (faceSet[m.face || "-"] = faceSet[m.face || "-"] || []).push(m); });
-    h += '<div class="card">' + MCL.h2("activity", "Running fleet status", "ok") + '<div class="small">' +
-      '<span class="badge Low">' + cnt.Running + ' running</span> <span class="badge Medium">' + cnt.Idle + ' idle</span> <span class="badge High">' + cnt.Breakdown + " breakdown</span></div>" +
+    h += card("activity", t("Running fleet status"), "ok", '<div class="small"><span class="badge Low">' + cnt.Running + " " + t("running") + '</span> <span class="badge Medium">' + cnt.Idle + " " + t("idle") + '</span> <span class="badge High">' + cnt.Breakdown + " " + t("breakdown") + "</span></div>" +
       (Object.keys(faceSet).length ? Object.keys(faceSet).map(function (f) {
-        return "<h3>" + esc(f) + "</h3>" + faceSet[f].map(function (m) {
-          return '<div class="item"><b>' + esc(m.id) + '</b> <span class="muted">' + esc(m.type || "") + '</span> <span class="badge ' + STC[m.state] + '">' + m.state + "</span></div>"; }).join(""); }).join("")
-        : empty("No machine status reported today.", "truck")) + "</div>";
+        return "<h3>" + esc(f) + "</h3>" + faceSet[f].map(function (m) { return '<div class="item"><b>' + esc(m.id) + '</b> <span class="muted">' + esc(m.type || "") + '</span> <span class="badge ' + STC[m.state] + '">' + t(m.state) + "</span></div>"; }).join(""); }).join("")
+        : empty("No machine status reported today.", "truck")));
+    h += card("wrench", t("Open breakdowns") + " " + (bdowns.length ? '<span class="badge High">' + bdowns.length + "</span>" : ""), "bad", bdowns.length ? bdowns.map(function (r) {
+      return '<div class="item' + (escIds[r.id] ? " escalate" : "") + '"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + " " + stBadge(r.status === "Open" ? "Breakdown" : "Under repair") +
+        '<div class="muted">' + esc(r.category || "") + (r.location ? " @ " + esc(r.location) : "") + (r.qty ? " &middot; " + num(r.qty, 1) + " " + t("hrs lost") : "") + " &middot; " + t("open") + " " + age(r.created_at) + "</div>" +
+        (r.details ? '<div class="small">' + esc(r.details) + "</div>" : "") + "</div>"; }).join("") : empty("No open breakdowns.", "check"));
+    h += "</div>";
 
-    h += '<div class="card">' + MCL.h2("wrench", "Open breakdowns " + (bdowns.length ? '<span class="badge High">' + bdowns.length + "</span>" : ""), "bad") + (bdowns.length ? bdowns.map(function (r) {
-      return '<div class="item"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + " " + stBadge(r.status === "Open" ? "Breakdown" : "Under repair") +
-        '<div class="muted">' + esc(r.category || "") + (r.location ? " @ " + esc(r.location) : "") + (r.qty ? " &middot; " + num(r.qty, 1) + " hrs lost" : "") + "</div>" +
-        (r.details ? '<div class="small">' + esc(r.details) + "</div>" : "") + "</div>"; }).join("") : empty("No open breakdowns.", "check")) + "</div></div>";
-
-    h += '<div class="card">' + MCL.h2("hardhat", "Deployment by shift", "info") + '<div class="scroll"><table class="table"><tr><th>Shift</th><th>Overmen</th><th>Machines on faces</th><th>Available</th></tr>';
-    ["A", "B", "C"].forEach(function (s) {
-      var l = deploys.filter(function (r) { return r.shift === s; }), byFace = {}, total = 0;
-      l.forEach(function (r) { (byFace[r.title] = byFace[r.title] || []).push(num(r.qty) + " " + esc(r.category || "")); total += Number(r.qty) || 0; });
-      var ov = assigns.filter(function (r) { return r.shift === s; });
-      var seen = {}, av = [];
-      machines.filter(function (r) { return r.shift === s && r.status === "Open"; }).forEach(function (r) {   // newest entry per type wins
-        var k = r.category || r.title; if (seen[k]) return; seen[k] = 1; av.push((r.qty == null ? 1 : num(r.qty)) + " " + esc(k)); });
-      h += "<tr" + (s === now.shift ? ' class="now-row"' : "") + "><td><b>" + s + "</b>" + (s === now.shift ? '<br><span class="badge st">now</span>' : "") + '<br><span class="muted small">' + num(total) + " machines</span></td>" +
-        "<td>" + (ov.length ? ov.map(function (r) { return esc(r.location) + ' <span class="muted">@ ' + esc(r.title) + "</span>"; }).join("<br>") : '<span class="muted">-</span>') + "</td>" +
-        "<td>" + (l.length ? Object.keys(byFace).map(function (f) { return "<b>" + esc(f) + "</b>: " + byFace[f].join(", "); }).join("<br>") : '<span class="muted">-</span>') + "</td>" +
-        "<td>" + (av.length ? av.join("<br>") : '<span class="muted">-</span>') + "</td></tr>";
+    // HEMM availability / utilisation for the day (from the logbook)
+    var bdH = {}; pick(open, "breakdown").concat(res[3] ? pick(res[3], "breakdown") : []).forEach(function (r) { if (r.record_date === D) { var k = r.title + "|" + r.shift; bdH[k] = Math.max(bdH[k] || 0, Number(r.qty) || 0); } });
+    var byType = {};
+    hemm.forEach(function (r) {
+      var k = r.category || "Other", x = byType[k] = byType[k] || { n: 0, sched: 0, avail: 0, work: 0, diesel: 0 };
+      var b = Math.min(8, bdH[r.title + "|" + r.shift] || 0); x.n++; x.sched += 8; x.avail += 8 - b; x.work += Math.min(8, Number(r.qty) || 0); x.diesel += Number(r.qty2) || 0;
     });
-    h += "</table></div></div>";
+    var bt = Object.keys(byType);
+    h += card("gauge", t("Availability and utilisation (HEMM logbook)"), "info", bt.length ?
+      '<div class="scroll"><table class="table"><tr><th>' + t("Machine type") + "</th><th>" + t("Entries") + "</th><th>" + t("Availability") + "</th><th>" + t("Utilisation") + "</th><th>" + t("Diesel") + "</th></tr>" + bt.map(function (k) {
+        var x = byType[k], av = pct(x.avail, x.sched), ut = pct(x.work, x.avail);
+        return "<tr><td><b>" + esc(t(k)) + "</b></td><td>" + x.n + "</td><td>" + num(av, 0) + "%" + bar(av) + "</td><td>" + num(ut, 0) + "%" + bar(ut) + "</td><td>" + num(x.diesel) + " L</td></tr>"; }).join("") + "</table></div>" +
+      '<div class="muted small">' + t("Availability = (8 h - breakdown hours) / 8 h. Utilisation = working hours / available hours.") + "</div>"
+      : empty("No HEMM logbook entries for this day yet.", "gauge"));
 
-    // ---- 6. Hindrances ----
-    h += sec("alert", "Hindrances") + '<div class="card">' + (hind.length ? hind.map(function (r) {
-      return '<div class="item"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + " " + stBadge(HIND_ST[r.status]) +
-        '<div class="muted">' + esc(r.category || "") + (r.location ? " @ " + esc(r.location) : "") + (r.qty ? " &middot; " + num(r.qty, 1) + " hrs lost" : "") + "</div>" +
-        (r.details ? '<div class="small">' + esc(r.details) + "</div>" : "") + "</div>"; }).join("") : empty("No open hindrances.", "check")) + "</div>";
+    h += card("hardhat", t("Deployment by shift"), "info", '<div class="scroll"><table class="table"><tr><th>' + t("Shift") + "</th><th>" + t("Overmen") + "</th><th>" + t("Machines on faces") + "</th><th>" + t("Available") + "</th></tr>" +
+      ["A", "B", "C"].map(function (s) {
+        var l = deploys.filter(function (r) { return r.shift === s; }), byFace = {}, total = 0;
+        l.forEach(function (r) { (byFace[r.title] = byFace[r.title] || []).push(num(r.qty) + " " + esc(t(r.category || ""))); total += Number(r.qty) || 0; });
+        var ov = assigns.filter(function (r) { return r.shift === s; }), seen = {}, av = [];
+        machines.filter(function (r) { return r.shift === s && r.status === "Open"; }).forEach(function (r) { var k = r.category || r.title; if (seen[k]) return; seen[k] = 1; av.push((r.qty == null ? 1 : num(r.qty)) + " " + esc(t(k))); });
+        return "<tr" + (s === now.shift ? ' class="now-row"' : "") + "><td><b>" + s + "</b>" + (s === now.shift ? '<br><span class="badge st">' + t("now") + "</span>" : "") + '<br><span class="muted small">' + num(total) + " " + t("machines") + "</span></td>" +
+          "<td>" + (ov.length ? ov.map(function (r) { return esc(r.location) + ' <span class="muted">@ ' + esc(r.title) + "</span>"; }).join("<br>") : '<span class="muted">-</span>') + "</td>" +
+          "<td>" + (l.length ? Object.keys(byFace).map(function (f) { return "<b>" + esc(f) + "</b>: " + byFace[f].join(", "); }).join("<br>") : '<span class="muted">-</span>') + "</td>" +
+          "<td>" + (av.length ? av.join("<br>") : '<span class="muted">-</span>') + "</td></tr>"; }).join("") + "</table></div>");
 
-    $("board").innerHTML = h; $("status").innerHTML = "";
-    $("stamp").textContent = "Updated " + MCL.clockText() + ". Production counts up to the end of the previous shift. Refreshes every minute.";
+    // ---- site conditions: weather, water spraying, safety ----
+    h += sec("shield", "Safety and site conditions") + '<div class="grid two">';
+    h += weatherCard(now.past ? null : await weather(setting));
+    var roads = {}; sprays.forEach(function (r) { var k = r.location || "-"; if (!roads[k] || (r.record_time || "") > (roads[k].record_time || "")) roads[k] = r; });
+    var nowMin = now.past ? null : (+now.time.slice(0, 2) * 60 + +now.time.slice(3, 5));
+    h += card("droplet", t("Water spraying - last round"), "info", Object.keys(roads).length ? Object.keys(roads).map(function (k) {
+      var r = roads[k], tm = r.record_time || "", m = tm ? +tm.slice(0, 2) * 60 + +tm.slice(3, 5) : null, gap = nowMin != null && m != null ? nowMin - m : null;
+      if (gap != null && gap < 0) gap += 1440;
+      return '<div class="item"><b>' + esc(k) + "</b> " + esc(tm) + (gap != null ? ' <span class="badge ' + (gap > 120 ? "High" : "Low") + '">' + (gap > 120 ? t("due now") : Math.round(gap) + " " + t("min ago")) + "</span>" : "") + "</div>"; }).join("")
+      : empty("No water spraying logged for this day.", "droplet"));
+    h += "</div>";
+    h += card("shield", t("Safety observations (open)"), "bad", safety.length ? safety.map(function (r) {
+      return '<div class="item' + (escIds[r.id] ? " escalate" : "") + '"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + " " + stBadge(r.status === "Open" ? "Open" : "Action taken") +
+        '<div class="muted">' + esc(t(r.category || "")) + (r.location ? " @ " + esc(r.location) : "") + " &middot; " + age(r.created_at) + " " + t("ago") + "</div>" + (r.details ? '<div class="small">' + esc(r.details) + "</div>" : "") + "</div>"; }).join("")
+      : empty("No open safety observations.", "check"));
+
+    // ---- hindrances ----
+    h += sec("alert", "Hindrances") + card("alert", t("Open hindrances"), "", hind.length ? hind.map(function (r) {
+      return '<div class="item' + (escIds[r.id] ? " escalate" : "") + '"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + " " + stBadge(HIND_ST[r.status]) +
+        '<div class="muted">' + esc(t(r.category || "")) + (r.location ? " @ " + esc(r.location) : "") + (r.qty ? " &middot; " + num(r.qty, 1) + " " + t("hrs lost") : "") + " &middot; " + t("open") + " " + age(r.created_at) + "</div>" +
+        (r.details ? '<div class="small">' + esc(r.details) + "</div>" : "") + "</div>"; }).join("") : empty("No open hindrances.", "check"));
+
+    $("board").innerHTML = h; finish();
   } catch (e) {
     MCL.showMsg($("status"), "err", "Could not load the dashboard. Has 01-setup.sql been run?", e);
   } finally { busy = false; $("refresh").disabled = false; }
 }
+function finish() {
+  $("status").innerHTML = "";
+  $("stamp").textContent = t("Updated") + " " + MCL.clockText() + ". " + t("Production counts up to the end of the previous shift.") + (VIEW || REPORT ? "" : " " + t("Refreshes every minute."));
+}
+
+// ---------- daily report (print / PDF) ----------
+function reportHtml(L) {
+  var D = L.D, h = '<div class="report"><div class="report-head">' + MCL.art() + "<div><h2>" + esc(L.name) + "</h2><div>" + t("Daily report") + " - <b>" + esc(MCL.prettyDate(D)) + "</b></div>" +
+    '<div class="muted small">' + t("Made") + " " + esc(MCL.timeText(new Date().toISOString())) + " " + t("by Mine Monitor") + "</div></div></div>";
+  h += "<h3>" + t("Production") + '</h3><div class="scroll"><table class="table"><tr><th></th><th>' + t("Shift") + " A</th><th>" + t("Shift") + " B</th><th>" + t("Shift") + " C</th><th>" + t("Day") + "</th><th>" + t("Target") + "</th><th>%</th></tr>";
+  ["Coal", "OB"].forEach(function (mat) {
+    var mp = L.prod.filter(function (r) { return r.title === mat && r.record_date === D; }), p = L.P[mat], f = function (n) { return MCL.fmtQty(n, mat); };
+    h += "<tr><td><b>" + t(mat) + "</b></td>" + ["A", "B", "C"].map(function (s) { return "<td>" + f(sum(mp.filter(function (r) { return r.shift === s; }), "qty")) + "</td>"; }).join("") +
+      "<td><b>" + f(p.act.Daily) + "</b></td><td>" + (p.tg.Daily ? f(p.tg.Daily) : "-") + "</td><td>" + (p.tg.Daily ? num(pct(p.act.Daily, p.tg.Daily), 0) + "%" : "-") + "</td></tr>";
+  });
+  h += "</table></div><div class=\"scroll\"><table class=\"table\"><tr><th></th><th>" + t("Month to date") + "</th><th>%</th><th>" + t("Month-end forecast") + "</th><th>" + t("Year to date") + "</th><th>%</th></tr>";
+  ["Coal", "OB"].forEach(function (mat) {
+    var p = L.P[mat], f = function (n) { return MCL.fmtQty(n, mat); };
+    h += "<tr><td><b>" + t(mat) + "</b></td><td>" + f(p.act.Monthly) + "</td><td>" + (p.tg.Monthly ? num(pct(p.act.Monthly, p.tg.Monthly), 0) + "%" : "-") + "</td><td>" + f(p.mFore) + "</td><td>" + f(p.act.Annual) + "</td><td>" + (p.tg.Annual ? num(pct(p.act.Annual, p.tg.Annual), 0) + "%" : "-") + "</td></tr>";
+  });
+  var stripC = L.P.Coal.act.Daily, stripO = L.P.OB.act.Daily;
+  h += "</table></div><p>" + t("Stripping ratio (OB cu.m per tonne of coal) for the day:") + " <b>" + (stripC ? num(stripO / stripC, 2) : "-") + "</b></p>";
+  var dl = L.dayLog || [];
+  var hd = dl.filter(function (r) { return r.record_type === "hindrance"; }), bd = dl.filter(function (r) { return r.record_type === "breakdown"; }), sf = dl.filter(function (r) { return r.record_type === "safety"; });
+  var kinds = {}; hd.forEach(function (r) { kinds[r.category || "Other"] = (kinds[r.category || "Other"] || 0) + (Number(r.qty) || 0); });
+  h += "<h3>" + t("Hindrances reported") + " (" + hd.length + ")</h3>" + (hd.length ? "<ul>" + hd.map(function (r) { return "<li>" + esc(r.category || "") + ": " + esc(r.title) + (r.qty ? " - " + num(r.qty, 1) + " h" : "") + " (" + esc(t(r.status)) + ")</li>"; }).join("") + "</ul>" +
+    '<p class="small">' + t("Hours lost by kind:") + " " + Object.keys(kinds).map(function (k) { return esc(k) + " " + num(kinds[k], 1) + " h"; }).join(", ") + "</p>" : '<p class="muted">' + t("None") + "</p>");
+  h += "<h3>" + t("Breakdowns") + " (" + bd.length + ")</h3>" + (bd.length ? "<ul>" + bd.map(function (r) { return "<li>" + esc(r.title) + " (" + esc(r.category || "") + ")" + (r.qty ? " - " + num(r.qty, 1) + " h" : "") + " - " + esc(r.details || "") + "</li>"; }).join("") + "</ul>" : '<p class="muted">' + t("None") + "</p>");
+  h += "<h3>" + t("Safety observations") + " (" + sf.length + ")</h3>" + (sf.length ? "<ul>" + sf.map(function (r) { return "<li>" + esc(r.category || "") + ": " + esc(r.title) + "</li>"; }).join("") + "</ul>" : '<p class="muted">' + t("None") + "</p>");
+  if (L.handover) h += "<h3>" + t("Latest handover note") + "</h3><p>" + esc(L.handover.title) + (L.handover.details ? " - " + esc(L.handover.details) : "") + "</p>";
+  h += "<h3>" + t("Open instructions") + " (" + L.ins.length + ")</h3>" + (L.ins.length ? "<ul>" + L.ins.map(function (r) { return "<li>" + esc(r.title) + " (" + t("for") + " " + esc(r.location || "Everyone") + ")</li>"; }).join("") + "</ul>" : '<p class="muted">' + t("None") + "</p>");
+  h += '<div class="no-print" style="display:flex;gap:10px;flex-wrap:wrap"><button class="small" onclick="window.print()">' + MCL.icon("printer") + t("Print / save as PDF") + '</button><a class="small linkbtn" href="dashboard.html' + (VIEW ? "?date=" + VIEW : "") + '">' + t("Back to dashboard") + "</a></div></div>";
+  return h;
+}
+
+// ---------- share a short summary (WhatsApp or the phone's share menu) ----------
+function shareText() {
+  var L = LAST; if (!L) return "";
+  var s = "*" + L.name + "* - " + MCL.prettyDate(L.D) + (L.now.shift ? " (Shift " + L.now.shift + " running)" : "") + "\n";
+  ["Coal", "OB"].forEach(function (mat) {
+    var p = L.P[mat], f = function (n) { return MCL.fmtQty(n, mat); };
+    s += mat + ": day " + f(p.dayEst) + (p.tg.Daily ? " (" + num(pct(p.dayEst, p.tg.Daily), 0) + "% of target)" : "") + ", month " + f(p.act.Monthly) + (p.tg.Monthly ? " (" + num(pct(p.act.Monthly, p.tg.Monthly), 0) + "%)" : "") + "\n";
+  });
+  s += "Fleet: " + L.cnt.Running + "/" + L.fl.length + " running, " + L.cnt.Breakdown + " breakdown\n";
+  s += "Open hindrances: " + L.hind.length + ", safety: " + L.safety.length + "\n";
+  if (L.openBlasts.length) s += "Blasting: " + L.openBlasts.map(function (r) { return (r.record_time || "") + " at " + r.title; }).join(", ") + "\n";
+  return s + "- Mine Monitor";
+}
+$("btnShare").onclick = function () {
+  var txt = shareText(); if (!txt) return;
+  if (navigator.share) navigator.share({ text: txt }).catch(function () {});
+  else window.open("https://wa.me/?text=" + encodeURIComponent(txt), "_blank", "noopener");
+};
+
+// ---------- toolbar ----------
+function go(params) { var u = new URLSearchParams(params); location.href = "dashboard.html" + (u.toString() ? "?" + u : ""); }
+$("viewDate").value = VIEW;
+$("viewDate").onchange = function () { var v = $("viewDate").value; go(v ? { date: v } : {}); };
+$("btnToday").onclick = function () { go({}); };
+$("btnReport").innerHTML = MCL.icon("printer") + t("Daily report");
+$("btnReport").onclick = function () { var p = { report: 1 }; if (VIEW) p.date = VIEW; go(p); };
+$("btnShare").innerHTML = MCL.icon("share") + t("Share");
+$("btnTv").innerHTML = MCL.icon("tv") + t("TV mode");
+$("btnTv").onclick = function () { go({ tv: 1 }); };
+$("refresh").innerHTML = MCL.icon("refresh") + t("Refresh now");
 $("refresh").onclick = load;
-MCL.autoRefresh(load, 60000);
+MCL.translatePage();
+
+// ---------- TV mode: big text, no menu, slow automatic scrolling ----------
+if (TV) {
+  document.body.classList.add("tv");
+  var exit = document.createElement("a"); exit.href = "dashboard.html"; exit.className = "tv-exit"; exit.textContent = t("Exit TV mode"); document.body.appendChild(exit);
+  var pause = 0;
+  setInterval(function () {
+    if (pause > 0) { pause--; if (pause === 0 && window.scrollY > 0) window.scrollTo(0, 0); return; }
+    window.scrollBy(0, 1);
+    if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 2) pause = 160;   // wait ~8 s at the bottom
+  }, 50);
+}
+if (REPORT) { $("btnReport").hidden = true; $("btnTv").hidden = true; }
+if (VIEW || REPORT) load(); else MCL.autoRefresh(load, 60000);
 </script>
 </body>
 </html>

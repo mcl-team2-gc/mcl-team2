@@ -175,3 +175,45 @@ button .ic{vertical-align:-3px;margin-right:6px}
 .qbtns{display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px}
 .qbtns button{min-height:64px;font-size:1.2rem;margin-top:12px}
 button.ghost{margin-top:10px}
+
+/* ---------- dashboard toolbar, alerts, extras ---------- */
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.toolbar button{margin:0}
+.datepick{display:flex;align-items:center;gap:8px;margin:0;font-size:.88rem;color:var(--mute);font-weight:600}
+.datepick input{width:auto;padding:8px 10px;min-height:40px}
+.alert{display:flex;gap:12px;align-items:flex-start;border-radius:14px;padding:12px 14px;margin-bottom:12px;font-size:.95rem;border:1px solid}
+.alert>.ic{width:24px;height:24px;flex:none;margin-top:2px}
+.alert.blast{background:#fff7ed;border-color:#fdba74;color:#7c2d12}
+.alert.urgent{background:var(--bad-soft);border-color:#fca5a5;color:#7f1d1d;animation:glow 2s infinite}
+@keyframes glow{50%{box-shadow:0 0 0 4px rgba(220,38,38,.15)}}
+.item.escalate{border-left:4px solid var(--bad);padding-left:10px;background:linear-gradient(90deg,#fff1f2,transparent)}
+.seen{color:var(--ok);margin-top:4px}.seen .ic{width:14px;height:14px;margin-right:4px}
+.rr{background:var(--grey-soft);border-radius:10px;padding:6px 10px;margin-top:6px}.rr .ic{width:14px;height:14px;margin-right:4px;color:var(--brand)}
+.wx{display:flex;gap:16px;align-items:center}
+.wx-big{display:flex;align-items:center;gap:8px;font-size:2rem}.wx-big .ic{width:40px;height:40px;color:#f59e0b}
+a.linkbtn{display:inline-flex;align-items:center;padding:8px 14px;border-radius:12px;border:1px solid var(--line);color:var(--ink2);text-decoration:none;font-weight:600;margin-top:8px}
+
+/* daily report */
+.report{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
+.report-head{display:flex;gap:14px;align-items:center;border-bottom:2px solid var(--brand);padding-bottom:12px;margin-bottom:8px}
+.report-head .art{width:120px;height:48px;flex:none}
+.report-head h2{margin:0}
+.report h3{margin:18px 0 6px;color:var(--brand-d)}
+.report .table{margin-bottom:8px}
+@media print{
+  header.top,.no-print,.toolbar,.foot,.tv-exit{display:none!important}
+  body{background:#fff;font-size:12px}
+  main{padding:0;max-width:none}
+  .card,.report,.kpi{box-shadow:none}
+  .hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+
+/* TV mode (control room screen) */
+body.tv{font-size:20px}
+body.tv header.top{position:relative}
+body.tv nav.menu,body.tv .toolbar,body.tv .foot{display:none}
+body.tv main{max-width:1600px}
+@media(min-width:900px){body.tv .kpis{grid-template-columns:repeat(4,1fr)}}
+body.tv .kpi b{font-size:2.2rem}
+@media(min-width:1200px){body.tv .grid.two{grid-template-columns:1fr 1fr}}
+.tv-exit{position:fixed;right:12px;bottom:12px;z-index:20;background:rgba(15,23,42,.75);color:#fff;padding:8px 14px;border-radius:999px;text-decoration:none;font-size:.85rem}
