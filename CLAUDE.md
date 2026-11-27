@@ -71,13 +71,14 @@
   commit and push.
 
 ## Our tool (filled in during Phase 1)
-- Team:
-- Tool name:
-- Problem:
-- Who records / who decides:
-- Table name and columns:
-- Pages: index.html = entry page; dashboard.html = dashboard
+- Team: MCL team 2 (IIM Sambalpur MDP)
+- Tool name: Mine Monitor (operational status of a coal mine)
+- Problem: Management cannot see faces, machines, targets, production, hindrances in one place.
+- Who records / who decides: Admin, Planning officer, Shift in-charge, Production/weighbridge enter data (role passcodes); Higher management gives instructions and reads the dashboard.
+- Table name and columns: mine_records (id, created_at, record_type, category, title, location, urgency, status, shift, record_date, record_time, qty, qty2, details, entered_by). record_type = setting / target / face / machine / trip / production / hindrance / instruction / user.
+- Pages: index.html = entry page (passcode sign-in + data modules); dashboard.html = dashboard. Shared files: style.css, common.js.
 
 ## Progress Log (newest entry at the bottom)
 - Phase 0 (starter): placeholder index.html, config.js without settings and
   this CLAUDE.md. Next: Phase 1 - the table and the entry page.
+- Phase 1 (Claude): Built database/01-setup.sql (one table mine_records, RLS, grants, 5 role passcodes), index.html (sign-in + 8 entry modules), dashboard.html (instructions, production vs targets with current-shift estimate, faces, machines by shift, hindrances), style.css, common.js. Works: code written, NOT yet tested on the live site. Known problems: passcodes are a simple gate, not real security (anyone with the key can reach the table); trips are summed, so enter only NEW trips. Next: Data Keeper edits passcodes in 01-setup.sql and runs it, fills config.js, team tests on the live site.
