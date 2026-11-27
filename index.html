@@ -3,30 +3,247 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Team tool - coming soon</title>
-  <style>
-    body { font-family: Arial, sans-serif; color: #1f2937;
-           max-width: 640px; margin: 40px auto; padding: 0 16px; }
-    .box { border: 2px dashed #c2410c; border-radius: 12px; padding: 20px; }
-    .ok { color: #047857; font-weight: bold; }
-    .warn { color: #b45309; font-weight: bold; }
-  </style>
+  <title>Mine Monitor - Data entry</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="box">
-    <h1>Our team's tool is coming soon</h1>
-    <p>This placeholder page will be replaced in Phase 1 of the workshop.</p>
-    <p id="config-check">Checking database settings...</p>
-  </div>
-  <script src="config.js"></script>
-  <script>
-    var el = document.getElementById("config-check");
-    var url = window.SUPABASE_URL || "";
-    var key = window.SUPABASE_PUBLISHABLE_KEY || "";
-    var ready = url.indexOf("PASTE") === -1 && key.indexOf("sb_publishable_") === 0;
-    el.textContent = ready ? "Database settings: filled in \u2713"
-                           : "Database settings: not filled in yet (this is normal before Phase 1)";
-    el.className = ready ? "ok" : "warn";
-  </script>
+<header id="app-header"></header>
+<main>
+  <div id="status"></div>
+
+  <section id="login" class="card" hidden>
+    <h2>Sign in to enter data</h2>
+    <p class="muted">Pick your role and type your passcode. The Dashboard needs no passcode.</p>
+    <label for="role">Role</label>
+    <select id="role">
+      <option value="admin">Admin</option>
+      <option value="planning">Planning officer</option>
+      <option value="shift">Shift in-charge</option>
+      <option value="production">Production / weighbridge</option>
+      <option value="management">Higher management</option>
+    </select>
+    <label for="code">Passcode</label>
+    <input id="code" type="password" autocomplete="off">
+    <button id="loginBtn">Sign in</button>
+  </section>
+
+  <section id="app" hidden>
+    <div class="card">
+      <b id="who"></b>
+      <button class="small alt" id="logout" style="float:right;margin:0">Sign out</button>
+    </div>
+    <div class="tabs" id="tabs"></div>
+    <div id="module"></div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script>
+var T = MCL.TABLE, esc = MCL.esc;
+var ROLE_NAMES = { admin: "Admin", planning: "Planning officer", shift: "Shift in-charge",
+                   production: "Production / weighbridge", management: "Higher management" };
+var SHIFTS = [["A","A (6 am - 2 pm)"],["B","B (2 pm - 10 pm)"],["C","C (10 pm - 6 am)"]];
+var URG = [["Low","Low"],["Medium","Medium"],["High","High"]];
+var MAT = [["Coal","Coal"],["OB","OB (overburden)"]];
+var STAT_LABELS = {
+  face:        { "Open": "Planned", "In progress": "Working now", "Resolved": "Closed" },
+  machine:     { "Open": "Available (standby)", "In progress": "Deployed", "Resolved": "Released" },
+  hindrance:   { "Open": "Open", "In progress": "Being solved", "Resolved": "Resolved" },
+  instruction: { "Open": "New", "In progress": "Being acted on", "Resolved": "Done" }
+};
+function opts(map) { return Object.keys(map).map(function (k) { return [k, map[k]]; }); }
+
+// One module = one kind of record. "roles" says who may use it.
+var MODULES = [
+  { id: "setting", label: "Mine name, date, time", roles: ["admin"], hint:
+    "Leave Date and Time empty to show the live clock. Fill both to fix them (for example, report time).",
+    fields: [ { k: "title", l: "Mine name", t: "text", req: 1 }, { k: "record_date", l: "Date", t: "date" },
+              { k: "record_time", l: "Time", t: "time" } ],
+    line: function (r) { return r.title + " | " + (r.record_date || "live date") + " " + (r.record_time || "live time"); } },
+
+  { id: "target", label: "Targets", roles: ["admin", "planning"], hint:
+    "Newest entry for each Period + Material is used. Coal is in tonnes, OB in cubic metres.",
+    fields: [ { k: "category", l: "Period", t: "select", o: [["Annual","Annual"],["Monthly","Monthly"],["Daily","Daily"]] },
+              { k: "title", l: "Material", t: "select", o: MAT },
+              { k: "qty", l: "Target quantity", t: "number", req: 1 } ],
+    line: function (r) { return r.category + " " + r.title + " target: " + MCL.num(r.qty); } },
+
+  { id: "face", label: "Working faces", roles: ["admin", "planning"], hint:
+    "Status: Planned = not started, Working now = shown on dashboard as working, Closed = finished.",
+    fields: [ { k: "category", l: "Type", t: "select", o: MAT },
+              { k: "title", l: "Face name / number", t: "text", req: 1 },
+              { k: "location", l: "Location (panel / bench)", t: "text" },
+              { k: "status", l: "Status", t: "select", o: opts(STAT_LABELS.face), d: "In progress" },
+              { k: "urgency", l: "Urgency", t: "select", o: URG },
+              { k: "details", l: "Remarks", t: "textarea" } ],
+    flow: true, line: function (r) { return r.category + " face " + r.title + (r.location ? " @ " + r.location : ""); } },
+
+  { id: "machine", label: "Machines & shifts", roles: ["admin", "shift"], hint:
+    "One row per machine per shift. Deployed = working this shift. Available = ready but not deployed.",
+    fields: [ { k: "record_date", l: "Date", t: "date", today: 1, req: 1 },
+              { k: "shift", l: "Shift", t: "select", o: SHIFTS },
+              { k: "title", l: "Machine ID", t: "text", req: 1 },
+              { k: "category", l: "Machine type", t: "select", o: ["Shovel","Excavator","Dumper","Dozer","Drill","Pay loader","Surface miner","Water tanker","Other"].map(function (x) { return [x, x]; }) },
+              { k: "location", l: "Deployed at (face / road)", t: "text" },
+              { k: "status", l: "Status", t: "select", o: opts(STAT_LABELS.machine), d: "In progress" } ],
+    flow: true, line: function (r) { return r.record_date + " Shift " + r.shift + ": " + r.title + " (" + r.category + ")" + (r.location ? " @ " + r.location : ""); } },
+
+  { id: "trip", label: "Trips (current shift)", roles: ["admin", "shift", "production"], hint:
+    "Enter NEW trips counted since your last entry. The dashboard adds them up to estimate this shift.",
+    fields: [ { k: "record_date", l: "Date (night shift after midnight = previous date)", t: "date", today: 1, req: 1 },
+              { k: "shift", l: "Shift", t: "select", o: SHIFTS },
+              { k: "title", l: "Material", t: "select", o: MAT },
+              { k: "qty", l: "Number of trips", t: "number", req: 1 },
+              { k: "qty2", l: "Quantity per trip (tonnes or cu.m)", t: "number", req: 1 },
+              { k: "location", l: "From face", t: "text" } ],
+    line: function (r) { return r.record_date + " " + r.shift + ": " + r.title + " " + r.qty + " trips x " + r.qty2; } },
+
+  { id: "production", label: "Actual production", roles: ["admin", "production"], hint:
+    "Enter the final figure of a COMPLETED shift only. One entry per shift per material. Coal in tonnes, OB in cu.m.",
+    fields: [ { k: "record_date", l: "Date (night shift after midnight = previous date)", t: "date", today: 1, req: 1 },
+              { k: "shift", l: "Shift", t: "select", o: SHIFTS },
+              { k: "title", l: "Material", t: "select", o: MAT },
+              { k: "qty", l: "Actual production", t: "number", req: 1 } ],
+    line: function (r) { return r.record_date + " Shift " + r.shift + ": " + r.title + " " + MCL.num(r.qty); } },
+
+  { id: "hindrance", label: "Hindrances", roles: ["admin", "planning", "shift"], hint:
+    "Anything stopping or slowing production. Update the status when it is being solved or is solved.",
+    fields: [ { k: "category", l: "Kind", t: "select", o: ["Machine breakdown","Blasting / drilling","Rain / weather","Land / R&R","Law and order","Power / diesel","Road / haul road","Manpower","Other"].map(function (x) { return [x, x]; }) },
+              { k: "title", l: "Short title", t: "text", req: 1 },
+              { k: "location", l: "Location", t: "text" },
+              { k: "urgency", l: "Urgency", t: "select", o: URG, d: "Medium" },
+              { k: "status", l: "Status", t: "select", o: opts(STAT_LABELS.hindrance) },
+              { k: "qty", l: "Hours lost so far (optional)", t: "number" },
+              { k: "details", l: "Details", t: "textarea" } ],
+    flow: true, line: function (r) { return r.category + ": " + r.title + (r.location ? " @ " + r.location : ""); } },
+
+  { id: "instruction", label: "Instructions", roles: ["admin", "management"], hint:
+    "These show at the top of the dashboard until marked Done.",
+    fields: [ { k: "title", l: "Instruction", t: "text", req: 1 },
+              { k: "location", l: "For (person / section)", t: "text" },
+              { k: "urgency", l: "Urgency", t: "select", o: URG, d: "Medium" },
+              { k: "details", l: "More details", t: "textarea" } ],
+    flow: true, line: function (r) { return r.title + (r.location ? " (for " + r.location + ")" : ""); } }
+];
+
+var db = null, role = null, cur = null;
+var $ = function (id) { return document.getElementById(id); };
+function today() { var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+
+async function start() {
+  MCL.renderHeader("entry", null);
+  if (!MCL.configReady()) {
+    MCL.showMsg($("status"), "info", "The database settings in config.js are not filled in yet. Ask the Data Keeper to paste the Project URL and publishable key.");
+    return;
+  }
+  db = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_PUBLISHABLE_KEY);
+  try { MCL.renderHeader("entry", await MCL.loadSetting(db)); }
+  catch (e) { MCL.showMsg($("status"), "err", "Could not reach the database. Has 01-setup.sql been run?", e); }
+  var saved = null;
+  try { saved = sessionStorage.getItem("mclRole"); } catch (e) {}
+  if (saved && ROLE_NAMES[saved]) { role = saved; showApp(); } else { $("login").hidden = false; }
+}
+
+$("loginBtn").onclick = async function () {
+  var r = $("role").value, code = $("code").value;
+  if (!code) { MCL.showMsg($("status"), "err", "Please type your passcode."); return; }
+  if (!db) { MCL.showMsg($("status"), "err", "Database is not connected yet."); return; }
+  try {
+    var res = await db.from(T).select("details,created_at").eq("record_type", "user").eq("category", r)
+      .order("created_at", { ascending: true }).limit(1);       // the FIRST passcode row counts
+    if (res.error) throw res.error;
+    if (!res.data.length) { MCL.showMsg($("status"), "err", "No passcode is set for this role. Ask the Data Keeper to run 01-setup.sql."); return; }
+    var h = await MCL.sha256("mcl:" + r + ":" + code);
+    if (h !== res.data[0].details) { MCL.showMsg($("status"), "err", "Wrong passcode. Please try again."); return; }
+    role = r; try { sessionStorage.setItem("mclRole", r); } catch (e) {}
+    $("code").value = ""; $("status").innerHTML = ""; $("login").hidden = true; showApp();
+  } catch (e) { MCL.showMsg($("status"), "err", "Sign-in failed.", e); }
+};
+$("logout").onclick = function () {
+  try { sessionStorage.removeItem("mclRole"); } catch (e) {}
+  role = null; $("app").hidden = true; $("login").hidden = false;
+};
+
+function showApp() {
+  $("app").hidden = false; $("login").hidden = true;
+  $("who").textContent = "Signed in as: " + ROLE_NAMES[role];
+  var mine = MODULES.filter(function (m) { return role === "admin" ? true : m.roles.indexOf(role) > -1; });
+  $("tabs").innerHTML = "";
+  mine.forEach(function (m) {
+    var b = document.createElement("button"); b.textContent = m.label; b.id = "tab-" + m.id;
+    b.onclick = function () { openModule(m); }; $("tabs").appendChild(b);
+  });
+  openModule(mine[0]);
+}
+
+function openModule(m) {
+  cur = m;
+  Array.prototype.forEach.call($("tabs").children, function (b) { b.className = b.id === "tab-" + m.id ? "on" : ""; });
+  var h = '<div class="card"><h2>' + esc(m.label) + '</h2><p class="muted">' + esc(m.hint) + '</p><form id="f">';
+  m.fields.forEach(function (f) {
+    h += '<label for="f_' + f.k + '">' + esc(f.l) + (f.req ? " *" : "") + "</label>";
+    if (f.t === "select") {
+      h += '<select id="f_' + f.k + '">' + f.o.map(function (o) {
+        return '<option value="' + esc(o[0]) + '"' + (o[0] === f.d ? " selected" : "") + ">" + esc(o[1]) + "</option>"; }).join("") + "</select>";
+    } else if (f.t === "textarea") { h += '<textarea id="f_' + f.k + '"></textarea>'; }
+    else { h += '<input id="f_' + f.k + '" type="' + f.t + '"' + (f.t === "number" ? ' step="any" inputmode="decimal"' : "") +
+           (f.today ? ' value="' + today() + '"' : "") + ">"; }
+  });
+  h += '<button type="submit">Save</button></form><div id="fmsg"></div></div><div class="card"><h2>Latest entries</h2><div id="list">Loading...</div></div>';
+  $("module").innerHTML = h;
+  $("f").onsubmit = function (ev) { ev.preventDefault(); save(m); };
+  loadList(m);
+}
+
+async function save(m) {
+  var row = { record_type: m.id, entered_by: role };
+  for (var i = 0; i < m.fields.length; i++) {
+    var f = m.fields[i], v = $("f_" + f.k).value.trim();
+    if (f.req && !v) { MCL.showMsg($("fmsg"), "err", "Please fill: " + f.l); return; }
+    if (v === "") continue;
+    row[f.k] = f.t === "number" ? Number(v) : v;
+  }
+  try {
+    var r = await db.from(T).insert(row);
+    if (r.error) throw r.error;
+    MCL.showMsg($("fmsg"), "ok", "Saved.");
+    $("f").reset();
+    m.fields.forEach(function (f) { if (f.today) $("f_" + f.k).value = today(); });
+    loadList(m);
+    if (m.id === "setting") MCL.renderHeader("entry", await MCL.loadSetting(db));
+  } catch (e) { MCL.showMsg($("fmsg"), "err", "Could not save.", e); }
+}
+
+async function loadList(m) {
+  try {
+    var r = await db.from(T).select("*").eq("record_type", m.id).order("created_at", { ascending: false }).limit(12);
+    if (r.error) throw r.error;
+    if (!r.data.length) { $("list").textContent = "Nothing entered yet."; return; }
+    $("list").innerHTML = r.data.map(function (x) {
+      var s = '<div class="item">' + esc(m.line(x));
+      if (m.flow) {
+        s += ' <span class="badge ' + esc(x.urgency) + '">' + esc(x.urgency) + '</span> <span class="badge st">' +
+             esc((STAT_LABELS[m.id] || {})[x.status] || x.status) + "</span><br>";
+        Object.keys(STAT_LABELS[m.id]).forEach(function (st) {
+          if (st !== x.status) s += '<button class="small alt" data-id="' + x.id + '" data-st="' + st + '">Mark: ' + esc(STAT_LABELS[m.id][st]) + "</button>";
+        });
+      }
+      return s + "</div>";
+    }).join("");
+    Array.prototype.forEach.call($("list").querySelectorAll("button[data-id]"), function (b) {
+      b.onclick = async function () {
+        try {
+          var u = await db.from(T).update({ status: b.dataset.st }).eq("id", b.dataset.id);
+          if (u.error) throw u.error;
+          loadList(m);
+        } catch (e) { MCL.showMsg($("fmsg"), "err", "Could not update the status.", e); }
+      };
+    });
+  } catch (e) { MCL.showMsg($("list"), "err", "Could not load entries.", e); }
+}
+start();
+</script>
 </body>
 </html>

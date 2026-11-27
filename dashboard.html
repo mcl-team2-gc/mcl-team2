@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mine Monitor - Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="app-header"></header>
+<main>
+  <div id="status"></div>
+  <div id="board"></div>
+  <p class="muted" id="stamp"></p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script>
+var T = MCL.TABLE, esc = MCL.esc, num = MCL.num;
+var $ = function (id) { return document.getElementById(id); };
+var db = null;
+var UNIT = { Coal: "tonnes", OB: "cu.m" };
+var FACE_ST = { "Open": "Planned", "In progress": "Working now" };
+var HIND_ST = { "Open": "Open", "In progress": "Being solved" };
+var INS_ST = { "Open": "New", "In progress": "Being acted on" };
+
+function sum(rows, f) { return rows.reduce(function (a, r) { return a + (Number(r[f]) || 0); }, 0); }
+function badge(u) { return '<span class="badge ' + esc(u) + '">' + esc(u) + "</span>"; }
+function bar(p, est) { return '<div class="bar' + (est ? " est" : "") + '"><i style="width:' + Math.max(0, Math.min(100, p)) + '%"></i></div>'; }
+function pct(a, t) { return t > 0 ? a / t * 100 : 0; }
+
+// Estimate of the running shift: trips so far + remaining hours x blended rate.
+// Early in the shift we trust past averages; later we trust today's trips.
+function estimate(mat, now, prod, trips) {
+  var tripsT = trips.filter(function (r) { return r.title === mat; })
+    .reduce(function (a, r) { return a + (Number(r.qty) || 0) * (Number(r.qty2) || 0); }, 0);
+  var byShift = {};
+  prod.filter(function (r) { return r.title === mat; }).forEach(function (r) {
+    var k = r.record_date + r.shift; byShift[k] = (byShift[k] || 0) + (Number(r.qty) || 0);
+  });
+  var keys = Object.keys(byShift).sort().reverse().slice(0, 10);
+  var avgShift = keys.length ? keys.reduce(function (a, k) { return a + byShift[k]; }, 0) / keys.length : 0;
+  var histRate = avgShift / 8, el = now.elapsed, w = el / 8;
+  var tripRate = el >= 0.25 ? tripsT / el : null;
+  var rate = tripRate == null ? histRate : (w * tripRate + (1 - w) * histRate);
+  return { value: tripsT + (8 - el) * rate, tripsT: tripsT, avgShift: avgShift, n: keys.length };
+}
+
+async function load() {
+  if (!MCL.configReady()) {
+    MCL.renderHeader("dash", null);
+    MCL.showMsg($("status"), "info", "The database settings in config.js are not filled in yet. Ask the Data Keeper to paste the Project URL and publishable key.");
+    return;
+  }
+  db = db || window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_PUBLISHABLE_KEY);
+  try {
+    var setting = await MCL.loadSetting(db), now = MCL.renderHeader("dash", setting);
+    var fy = MCL.fyStart(now.shiftDate), month = now.shiftDate.slice(0, 8) + "01";
+    var res = await Promise.all([
+      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "production").gte("record_date", fy).order("created_at").order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "trip").eq("record_date", now.shiftDate).eq("shift", now.shift).order("created_at").order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "target").order("created_at", { ascending: false }).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "face").neq("status", "Resolved").order("created_at", { ascending: false }).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "machine").eq("record_date", now.shiftDate).order("created_at", { ascending: false }).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "hindrance").neq("status", "Resolved").order("created_at", { ascending: false }).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "instruction").neq("status", "Resolved").order("created_at", { ascending: false }).order("id"); })
+    ]);
+    var prodAll = res[0], trips = res[1], targets = res[2], faces = res[3], machines = res[4], hind = res[5], ins = res[6];
+    // "till previous shift": leave out the shift that is running now
+    var prod = prodAll.filter(function (r) { return !(r.record_date === now.shiftDate && r.shift === now.shift); });
+
+    var h = "";
+    // 1. Instructions from higher management
+    if (ins.length) {
+      h += '<div class="card instr"><h2>Instructions from management</h2>' + ins.map(function (r) {
+        return '<div class="item"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + ' <span class="badge st">' + esc(INS_ST[r.status]) + "</span>" +
+          (r.location ? '<div class="muted">For: ' + esc(r.location) + "</div>" : "") +
+          (r.details ? "<div>" + esc(r.details) + "</div>" : "") + "</div>"; }).join("") + "</div>";
+    }
+    // 2. Production vs target
+    h += '<div class="grid two">';
+    ["Coal", "OB"].forEach(function (mat) {
+      var mp = prod.filter(function (r) { return r.title === mat; });
+      var act = {
+        Daily: sum(mp.filter(function (r) { return r.record_date === now.shiftDate; }), "qty"),
+        Monthly: sum(mp.filter(function (r) { return r.record_date >= month; }), "qty"),
+        Annual: sum(mp, "qty")
+      };
+      var est = estimate(mat, now, prod, trips);
+      h += '<div class="card"><h2>' + (mat === "Coal" ? "Coal production" : "OB removal") + ' <span class="muted">(' + UNIT[mat] + ")</span></h2>";
+      ["Daily", "Monthly", "Annual"].forEach(function (p) {
+        var t = targets.filter(function (r) { return r.category === p && r.title === mat; })[0];
+        var tv = t ? Number(t.qty) : 0;
+        h += "<h3>" + p + "</h3><div>Actual " + num(act[p]) + " / Target " + (t ? num(tv) : "not set") +
+             (t ? " &middot; <b>" + num(pct(act[p], tv), 1) + "%</b>" : "") + "</div>" + bar(pct(act[p], tv));
+      });
+      var dayEst = act.Daily + est.value, dt = targets.filter(function (r) { return r.category === "Daily" && r.title === mat; })[0];
+      h += '<h3>Running shift ' + now.shift + ' - estimate</h3><div><b>' + num(est.value) + "</b> expected by shift end</div>" +
+           bar(dt ? pct(dayEst, Number(dt.qty)) : 0, true) +
+           '<div class="muted">Day total with estimate: ' + num(dayEst) + (dt ? " of " + num(Number(dt.qty)) : "") + ".<br>" +
+           "How: trips so far (" + num(est.tripsT) + ") + hours left x a rate. The rate mixes today's trip speed with the average of the last " + est.n +
+           " shifts (" + num(est.avgShift) + " per shift); today's trips count more as the shift goes on.</div></div>";
+    });
+    h += "</div>";
+
+    // 3. Faces
+    h += '<div class="grid two">';
+    ["Coal", "OB"].forEach(function (mat) {
+      var l = faces.filter(function (r) { return r.category === mat; });
+      h += '<div class="card"><h2>' + (mat === "Coal" ? "Coal faces" : "OB faces") + "</h2>" +
+        (l.length ? l.map(function (r) {
+          return '<div class="item"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + ' <span class="badge st">' + esc(FACE_ST[r.status]) + "</span>" +
+            (r.location ? '<div class="muted">' + esc(r.location) + "</div>" : "") + (r.details ? "<div>" + esc(r.details) + "</div>" : "") + "</div>"; }).join("")
+          : '<p class="muted">No faces entered.</p>') + "</div>";
+    });
+    h += "</div>";
+
+    // 4. Machines by shift
+    h += '<div class="card"><h2>Machines - ' + esc(MCL.prettyDate(now.shiftDate)) + '</h2><div class="scroll"><table class="table"><tr><th>Shift</th><th>Deployed</th></tr>';
+    ["A", "B", "C"].forEach(function (s) {
+      var l = machines.filter(function (r) { return r.shift === s && r.status === "In progress"; });
+      h += "<tr><td><b>" + s + (s === now.shift ? " (now)" : "") + "</b><br><span class='muted'>" + l.length + " machines</span></td><td>" +
+        (l.length ? l.map(function (r) { return esc(r.title) + " <span class='muted'>" + esc(r.category || "") + (r.location ? " @ " + esc(r.location) : "") + "</span>"; }).join("<br>") : "<span class='muted'>None entered</span>") + "</td></tr>";
+    });
+    var av = machines.filter(function (r) { return r.status === "Open"; });
+    h += "</table></div><h3>Available (standby)</h3>" + (av.length ? av.map(function (r) {
+      return "<div>" + esc(r.title) + " <span class='muted'>" + esc(r.category || "") + " &middot; Shift " + esc(r.shift) + "</span></div>"; }).join("") : "<span class='muted'>None</span>") + "</div>";
+
+    // 5. Hindrances
+    h += '<div class="card"><h2>Hindrances</h2>' + (hind.length ? hind.map(function (r) {
+      return '<div class="item"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + ' <span class="badge st">' + esc(HIND_ST[r.status]) + "</span>" +
+        '<div class="muted">' + esc(r.category || "") + (r.location ? " @ " + esc(r.location) : "") + (r.qty ? " &middot; " + num(r.qty, 1) + " hrs lost" : "") + "</div>" +
+        (r.details ? "<div>" + esc(r.details) + "</div>" : "") + "</div>"; }).join("") : '<p class="muted">No open hindrances.</p>') + "</div>";
+
+    $("board").innerHTML = h; $("status").innerHTML = "";
+    $("stamp").textContent = "Production is counted up to the end of the previous shift. Refreshes every minute.";
+  } catch (e) {
+    MCL.showMsg($("status"), "err", "Could not load the dashboard. Has 01-setup.sql been run?", e);
+  }
+}
+load(); setInterval(load, 60000);
+</script>
+</body>
+</html>
