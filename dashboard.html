@@ -66,9 +66,12 @@ async function load() {
       MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "machine").eq("record_date", now.shiftDate).order("created_at", { ascending: false }).order("id"); }),
       MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "hindrance").neq("status", "Resolved").order("created_at", { ascending: false }).order("id"); }),
       MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "instruction").neq("status", "Resolved").order("created_at", { ascending: false }).order("id"); }),
-      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "deploy").eq("record_date", now.shiftDate).order("created_at", { ascending: false }).order("id"); })
+      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "deploy").eq("record_date", now.shiftDate).order("created_at", { ascending: false }).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "assign").eq("record_date", now.shiftDate).order("created_at", { ascending: false }).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "fleet").eq("record_date", now.shiftDate).order("created_at", { ascending: false }).order("id"); }),
+      MCL.fetchAll(function () { return db.from(T).select("*").eq("record_type", "breakdown").neq("status", "Resolved").order("created_at", { ascending: false }).order("id"); })
     ]);
-    var prodAll = res[0], trips = res[1], targets = res[2], faces = res[3], machines = res[4], hind = res[5], ins = res[6], deploys = res[7];
+    var prodAll = res[0], trips = res[1], targets = res[2], faces = res[3], machines = res[4], hind = res[5], ins = res[6], deploys = res[7], assigns = res[8], fleet = res[9], bdowns = res[10];
     // "till previous shift": leave out the shift that is running now
     var prod = prodAll.filter(function (r) { return !(r.record_date === now.shiftDate && r.shift === now.shift); });
 
@@ -134,6 +137,31 @@ async function load() {
       h += "<div><b>Shift " + s + ":</b> " + (parts.length ? parts.join(", ") : "<span class='muted'>none entered</span>") + "</div>";
     });
     h += "</div>";
+
+    // 4b. Overmen on faces, running fleet status and breakdowns
+    var down = {}; bdowns.forEach(function (r) { down[(r.title || "").toLowerCase()] = r; });
+    var seenM = {}, fl = [];
+    fleet.forEach(function (r) {   // newest entry for each machine wins
+      var k = (r.title || "").toLowerCase(); if (seenM[k]) return; seenM[k] = 1;
+      var d = down[k]; fl.push({ id: r.title, type: r.category, face: r.location, state: d ? "Breakdown" : (r.status === "In progress" ? "Running" : (r.status === "Open" ? "Idle" : "Off duty")) });
+    });
+    bdowns.forEach(function (r) { var k = (r.title || "").toLowerCase(); if (!seenM[k]) { seenM[k] = 1; fl.push({ id: r.title, type: r.category, face: r.location, state: "Breakdown" }); } });
+    var cnt = { Running: 0, Idle: 0, Breakdown: 0, "Off duty": 0 }; fl.forEach(function (m) { cnt[m.state]++; });
+    var STC = { Running: "Low", Idle: "Medium", Breakdown: "High", "Off duty": "" };
+    h += '<div class="grid two"><div class="card"><h2>Running fleet status</h2><div><b>' + cnt.Running + "</b> running &middot; <b>" + cnt.Idle + "</b> idle &middot; <b>" + cnt.Breakdown + "</b> breakdown</div>";
+    var faceSet = {}; fl.forEach(function (m) { (faceSet[m.face || "-"] = faceSet[m.face || "-"] || []).push(m); });
+    h += Object.keys(faceSet).length ? Object.keys(faceSet).map(function (f) {
+      return "<h3>" + esc(f) + "</h3>" + faceSet[f].map(function (m) {
+        return "<div>" + esc(m.id) + ' <span class="muted">' + esc(m.type || "") + '</span> <span class="badge ' + STC[m.state] + '">' + m.state + "</span></div>"; }).join(""); }).join("")
+      : '<p class="muted">No machine status reported today.</p>';
+    h += "</div><div class=\"card\"><h2>Overmen on faces</h2>";
+    h += ["A", "B", "C"].map(function (s) {
+      var l = assigns.filter(function (r) { return r.shift === s; });
+      return "<div><b>Shift " + s + (s === now.shift ? " (now)" : "") + ":</b> " + (l.length ? l.map(function (r) { return esc(r.location) + " @ " + esc(r.title); }).join("; ") : "<span class='muted'>none assigned</span>") + "</div>"; }).join("");
+    h += "<h3>Open breakdowns</h3>" + (bdowns.length ? bdowns.map(function (r) {
+      return '<div class="item"><b>' + esc(r.title) + "</b> " + badge(r.urgency) + ' <span class="badge st">' + esc(r.status === "Open" ? "Breakdown" : "Under repair") + "</span>" +
+        '<div class="muted">' + esc(r.category || "") + (r.location ? " @ " + esc(r.location) : "") + (r.qty ? " &middot; " + num(r.qty, 1) + " hrs lost" : "") + "</div>" +
+        (r.details ? "<div>" + esc(r.details) + "</div>" : "") + "</div>"; }).join("") : '<p class="muted">No open breakdowns.</p>') + "</div></div>";
 
     // 5. Hindrances
     h += '<div class="card"><h2>Hindrances</h2>' + (hind.length ? hind.map(function (r) {

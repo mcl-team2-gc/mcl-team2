@@ -66,10 +66,11 @@ async function load() {
       MCL.fetchAll(function () { return q("hindrance").order("created_at", { ascending: false }).order("id"); }),
       MCL.fetchAll(function () { return q("deploy").eq("record_date", now.shiftDate).order("created_at").order("id"); }),
       MCL.fetchAll(function () { return q("face").eq("status", "In progress").order("id"); }),
-      MCL.fetchAll(function () { return q("instruction").neq("status", "Resolved").order("id"); })
+      MCL.fetchAll(function () { return q("instruction").neq("status", "Resolved").order("id"); }),
+      MCL.fetchAll(function () { return q("breakdown").neq("status", "Resolved").order("id"); })
     ]);
     var prod = res[0].filter(function (r) { return !(r.record_date === now.shiftDate && r.shift === now.shift); });
-    var targets = res[1], hind = res[2], deploys = res[3], faces = res[4], ins = res[5];
+    var targets = res[1], hind = res[2], deploys = res[3], faces = res[4], ins = res[5], bd = res[6];
 
     // KPI tiles
     var k = "";
@@ -80,6 +81,7 @@ async function load() {
     });
     var openH = hind.filter(function (r) { return r.status !== "Resolved"; });
     k += kpi("Open hindrances", num(openH.length), num(sumBy(openH, "qty"), 1) + " hours lost so far");
+    k += kpi("Machines in breakdown", num(bd.length), num(sumBy(bd, "qty"), 1) + " hours lost so far");
     k += kpi("Active faces", num(faces.length));
     k += kpi("Machines deployed today", num(sumBy(deploys, "qty")));
     k += kpi("Open instructions", num(ins.length));

@@ -24,6 +24,10 @@
       <option value="overman">Overman</option>
       <option value="admin">Admin</option>
     </select>
+    <div id="nameRow" hidden>
+      <label for="uname">Your name or ID (Overman)</label>
+      <input id="uname" type="text" autocomplete="off" placeholder="Same name the Shift Incharge uses">
+    </div>
     <label for="code">Passcode</label>
     <input id="code" type="password" autocomplete="off">
     <button id="loginBtn">Sign in</button>
@@ -54,6 +58,8 @@ var FOR_WHO = [["All","Everyone"]].concat(Object.keys(ROLE_NAMES).filter(functio
 var STAT_LABELS = {
   face:        { "Open": "Planned", "In progress": "Active", "Resolved": "Closed" },
   hindrance:   { "Open": "Open", "In progress": "Being solved", "Resolved": "Resolved" },
+  fleet:       { "Open": "Idle", "In progress": "Running", "Resolved": "Off duty" },
+  breakdown:   { "Open": "Breakdown", "In progress": "Under repair", "Resolved": "Back in service" },
   instruction: { "Open": "New", "In progress": "Being acted on", "Resolved": "Done" }
 };
 function opts(map) { return Object.keys(map).map(function (k) { return [k, map[k]]; }); }
@@ -82,7 +88,7 @@ var MODULES = [
               { k: "location", l: "For", t: "select", o: FOR_WHO },
               { k: "urgency", l: "Urgency", t: "select", o: URG, d: "Medium" },
               { k: "details", l: "More details", t: "textarea" } ],
-    flow: true, line: function (r) { return r.title + (r.location ? " (for " + r.location + ")" : "") + (r.entered_by ? " - by " + (ROLE_NAMES[r.entered_by] || r.entered_by) : ""); } },
+    flow: true, line: function (r) { return r.title + (r.location ? " (for " + r.location + ")" : "") + (r.entered_by ? " - by " + (ROLE_NAMES[(r.entered_by || "").split(":")[0]] || r.entered_by) : ""); } },
 
   { id: "face", label: "Working faces", roles: ["pi"], hint:
     "Create a face, then set it Active to start production there. Set it Closed to stop. Shift Incharge can deploy machines only on Active faces.",
@@ -93,6 +99,34 @@ var MODULES = [
               { k: "urgency", l: "Urgency", t: "select", o: URG },
               { k: "details", l: "Remarks", t: "textarea" } ],
     flow: true, line: function (r) { return r.category + " face " + r.title + (r.location ? " @ " + r.location : ""); } },
+
+  { id: "assign", label: "Overman assignment", roles: ["shift"], hint:
+    "Assign an Overman to an Active face for a shift. Type the name or ID exactly as the Overman types it when signing in.",
+    fields: [ { k: "record_date", l: "Date (night shift after midnight = previous date)", t: "date", today: 1, req: 1 },
+              { k: "shift", l: "Shift", t: "select", o: SHIFTS },
+              { k: "title", l: "Active face", t: "select", dyn: "faces", req: 1 },
+              { k: "location", l: "Overman name or ID", t: "text", req: 1 },
+              { k: "details", l: "Remarks", t: "textarea" } ],
+    line: function (r) { return r.record_date + " Shift " + r.shift + ": " + r.location + " @ " + r.title; } },
+
+  { id: "fleet", label: "Running fleet status", roles: ["overman", "shift"], auto: 1, hint:
+    "Report a machine working on your face. Use the buttons in the list below to change it to Running, Idle or Off duty. Machine broke down? Use the Breakdowns tab.",
+    fields: [ { k: "location", l: "Face", t: "select", dyn: "auto", req: 1 },
+              { k: "title", l: "Machine ID", t: "text", req: 1 },
+              { k: "category", l: "Machine type", t: "select", o: MTYPES },
+              { k: "status", l: "Status now", t: "select", o: opts(STAT_LABELS.fleet), d: "In progress" },
+              { k: "details", l: "Remarks", t: "textarea" } ],
+    flow: true, line: function (r) { return r.title + " (" + r.category + ") @ " + r.location; } },
+
+  { id: "breakdown", label: "Breakdowns", roles: ["overman", "shift"], auto: 1, hint:
+    "Report a machine breakdown. When repair starts or ends, change the status with the buttons below. The machine shows as Breakdown on the dashboard until it is Back in service.",
+    fields: [ { k: "location", l: "Face", t: "select", dyn: "auto", req: 1 },
+              { k: "title", l: "Machine ID (same as in Running fleet status)", t: "text", req: 1 },
+              { k: "category", l: "Machine type", t: "select", o: MTYPES },
+              { k: "urgency", l: "Urgency", t: "select", o: URG, d: "High" },
+              { k: "qty", l: "Hours lost so far (optional)", t: "number" },
+              { k: "details", l: "What went wrong", t: "textarea" } ],
+    flow: true, line: function (r) { return r.title + " (" + r.category + ") @ " + r.location; } },
 
   { id: "deploy", label: "Fleet deployment", roles: ["shift"], hint:
     "Pick an Active face and say how many machines of one type are working there this shift. Add one entry for each machine type.",
@@ -132,10 +166,10 @@ var MODULES = [
     line: function (r) { return r.record_date + " Shift " + r.shift + ": " + r.title + " " + MCL.num(r.qty); } },
 
   { id: "hindrance", label: "Hindrances", roles: ["pi", "shift", "overman", "po", "mm"], hint:
-    "Anything stopping or slowing production. Update the status when it is being solved or is solved.",
+    "Overman: pick one of your assigned faces. Anything stopping or slowing production. Update the status when it is being solved or is solved.",
     fields: [ { k: "category", l: "Kind", t: "select", o: ["Machine breakdown","Blasting / drilling","Rain / weather","Land / R&R","Law and order","Power / diesel","Road / haul road","Manpower","Other"].map(function (x) { return [x, x]; }) },
               { k: "title", l: "Short title", t: "text", req: 1 },
-              { k: "location", l: "Location", t: "text" },
+              { k: "location", l: "Location", t: "text", ovFace: 1 },
               { k: "urgency", l: "Urgency", t: "select", o: URG, d: "Medium" },
               { k: "status", l: "Status", t: "select", o: opts(STAT_LABELS.hindrance) },
               { k: "qty", l: "Hours lost so far (optional)", t: "number" },
@@ -144,7 +178,7 @@ var MODULES = [
 ];
 var ALL_ROLES = ["admin", "gm"];   // these two see every module
 
-var db = null, role = null, cur = null;
+var db = null, role = null, cur = null, uname = "", SETTING = null;
 var $ = function (id) { return document.getElementById(id); };
 function today() { var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
 
@@ -155,16 +189,21 @@ async function start() {
     return;
   }
   db = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_PUBLISHABLE_KEY);
-  try { MCL.renderHeader("entry", await MCL.loadSetting(db)); }
+  try { SETTING = await MCL.loadSetting(db); MCL.renderHeader("entry", SETTING); }
   catch (e) { MCL.showMsg($("status"), "err", "Could not reach the database. Has 01-setup.sql been run?", e); }
   var saved = null;
   try { saved = sessionStorage.getItem("mclRole"); } catch (e) {}
+  try { uname = sessionStorage.getItem("mclName") || ""; } catch (e) {}
+  if (saved === "overman" && !uname) saved = null;
   if (saved && ROLE_NAMES[saved]) { role = saved; showApp(); } else { $("login").hidden = false; }
 }
 
+$("role").onchange = function () { $("nameRow").hidden = $("role").value !== "overman"; };
 $("loginBtn").onclick = async function () {
   var r = $("role").value, code = $("code").value;
   if (!code) { MCL.showMsg($("status"), "err", "Please type your passcode."); return; }
+  var nm = $("uname").value.trim();
+  if (r === "overman" && !nm) { MCL.showMsg($("status"), "err", "Overman: please type your name or ID."); return; }
   if (!db) { MCL.showMsg($("status"), "err", "Database is not connected yet."); return; }
   try {
     var res = await db.from(T).select("details,created_at").eq("record_type", "user").eq("category", r)
@@ -173,18 +212,19 @@ $("loginBtn").onclick = async function () {
     if (!res.data.length) { MCL.showMsg($("status"), "err", "No passcode is set for this role. Ask the Data Keeper to run 01-setup.sql."); return; }
     var h = await MCL.sha256("mcl:" + r + ":" + code);
     if (h !== res.data[0].details) { MCL.showMsg($("status"), "err", "Wrong passcode. Please try again."); return; }
-    role = r; try { sessionStorage.setItem("mclRole", r); } catch (e) {}
+    role = r; uname = r === "overman" ? nm : "";
+    try { sessionStorage.setItem("mclRole", r); sessionStorage.setItem("mclName", uname); } catch (e) {}
     $("code").value = ""; $("status").innerHTML = ""; $("login").hidden = true; showApp();
   } catch (e) { MCL.showMsg($("status"), "err", "Sign-in failed.", e); }
 };
 $("logout").onclick = function () {
-  try { sessionStorage.removeItem("mclRole"); } catch (e) {}
-  role = null; $("app").hidden = true; $("login").hidden = false;
+  try { sessionStorage.removeItem("mclRole"); sessionStorage.removeItem("mclName"); } catch (e) {}
+  role = null; uname = ""; $("app").hidden = true; $("login").hidden = false;
 };
 
 function showApp() {
   $("app").hidden = false; $("login").hidden = true;
-  $("who").textContent = "Signed in as: " + ROLE_NAMES[role];
+  $("who").textContent = "Signed in as: " + ROLE_NAMES[role] + (uname ? " - " + uname : "");
   var mine = MODULES.filter(function (m) { return ALL_ROLES.indexOf(role) > -1 ? true : m.roles.indexOf(role) > -1; });
   $("tabs").innerHTML = "";
   mine.forEach(function (m) {
@@ -194,23 +234,42 @@ function showApp() {
   openModule(mine[0]);
 }
 
+async function faceOptions(kind) {
+  // kind "faces" = all Active faces; "myfaces" = faces assigned to this Overman for the running shift
+  if (kind === "faces") {
+    var fr = await db.from(T).select("title,category,location").eq("record_type", "face").eq("status", "In progress").order("created_at", { ascending: false });
+    if (fr.error) throw fr.error;
+    return fr.data.map(function (x) { return [x.title, x.title + " (" + x.category + (x.location ? ", " + x.location : "") + ")"]; });
+  }
+  var n = MCL.mineNow(SETTING);
+  var ar = await db.from(T).select("title,location").eq("record_type", "assign").eq("record_date", n.shiftDate).eq("shift", n.shift).order("created_at", { ascending: false });
+  if (ar.error) throw ar.error;
+  var seen = {}, out = [];
+  ar.data.forEach(function (x) {
+    if ((x.location || "").trim().toLowerCase() === uname.trim().toLowerCase() && !seen[x.title]) { seen[x.title] = 1; out.push([x.title, x.title]); }
+  });
+  return out;
+}
+
 async function openModule(m) {
   cur = m;
-  for (var i = 0; i < m.fields.length; i++) {
-    if (m.fields[i].dyn === "faces") {
-      try {
-        var fr = await db.from(T).select("title,category,location").eq("record_type", "face").eq("status", "In progress").order("created_at", { ascending: false });
-        if (fr.error) throw fr.error;
-        m.fields[i].o = fr.data.map(function (x) { return [x.title, x.title + " (" + x.category + (x.location ? ", " + x.location : "") + ")"]; });
-      } catch (e) { m.fields[i].o = []; MCL.showMsg($("status"), "err", "Could not load the active faces.", e); }
+  var F = m._f = m.fields.map(function (f) { return Object.assign({}, f); });
+  for (var i = 0; i < F.length; i++) {
+    var f = F[i];
+    if (f.ovFace && role === "overman") { f.t = "select"; f.dyn = "myfaces"; f.l = "Your assigned face"; f.req = 1; }
+    if (f.dyn === "auto") f.dyn = role === "overman" ? "myfaces" : "faces";
+    if (f.dyn) {
+      try { f.o = await faceOptions(f.dyn); }
+      catch (e) { f.o = []; MCL.showMsg($("status"), "err", "Could not load the faces.", e); }
+      f.empty = f.dyn === "myfaces" ? "No face is assigned to you for this shift yet. Ask the Shift Incharge to assign you." : "No Active face yet. Ask the Production Incharge to set a face to Active.";
     }
   }
   Array.prototype.forEach.call($("tabs").children, function (b) { b.className = b.id === "tab-" + m.id ? "on" : ""; });
   var h = '<div class="card"><h2>' + esc(m.label) + '</h2><p class="muted">' + esc(m.hint) + '</p><form id="f">';
-  m.fields.forEach(function (f) {
+  F.forEach(function (f) {
     h += '<label for="f_' + f.k + '">' + esc(f.l) + (f.req ? " *" : "") + "</label>";
     if (f.t === "select" && !f.o.length) {
-      h += '<div class="msg info">No Active face yet. Ask the Production Incharge to set a face to Active.</div><select id="f_' + f.k + '"></select>';
+      h += '<div class="msg info">' + esc(f.empty) + '</div><select id="f_' + f.k + '"></select>';
     } else if (f.t === "select") {
       h += '<select id="f_' + f.k + '">' + f.o.map(function (o) {
         return '<option value="' + esc(o[0]) + '"' + (o[0] === f.d ? " selected" : "") + ">" + esc(o[1]) + "</option>"; }).join("") + "</select>";
@@ -225,9 +284,11 @@ async function openModule(m) {
 }
 
 async function save(m) {
-  var row = { record_type: m.id, entered_by: role };
-  for (var i = 0; i < m.fields.length; i++) {
-    var f = m.fields[i], v = $("f_" + f.k).value.trim();
+  var row = { record_type: m.id, entered_by: role === "overman" ? "overman:" + uname : role };
+  if (m.auto) { var n = MCL.mineNow(SETTING); row.record_date = n.shiftDate; row.shift = n.shift; }   // date and shift filled automatically
+  var F = m._f || m.fields;
+  for (var i = 0; i < F.length; i++) {
+    var f = F[i], v = $("f_" + f.k).value.trim();
     if (f.req && !v) { MCL.showMsg($("fmsg"), "err", "Please fill: " + f.l); return; }
     if (v === "") continue;
     row[f.k] = f.t === "number" ? Number(v) : v;
@@ -237,9 +298,9 @@ async function save(m) {
     if (r.error) throw r.error;
     MCL.showMsg($("fmsg"), "ok", "Saved.");
     $("f").reset();
-    m.fields.forEach(function (f) { if (f.today) $("f_" + f.k).value = today(); });
+    F.forEach(function (f) { if (f.today) $("f_" + f.k).value = today(); });
     loadList(m);
-    if (m.id === "setting") MCL.renderHeader("entry", await MCL.loadSetting(db));
+    if (m.id === "setting") { SETTING = await MCL.loadSetting(db); MCL.renderHeader("entry", SETTING); }
   } catch (e) { MCL.showMsg($("fmsg"), "err", "Could not save.", e); }
 }
 
