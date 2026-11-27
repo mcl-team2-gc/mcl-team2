@@ -6,4 +6,4 @@
 window.SUPABASE_URL = "https://zuzkrceerrvhyxemkmft.supabase.co";
 
 // Publishable key - starts with sb_publishable_
-window.SUPABASE_PUBLISHABLE_KEY = "PASTE_PUBLISHABLE_KEY_HERE";
+window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_WsakE6w6M1dW8rqJiGg1hQ_Bs7UjVK0";
