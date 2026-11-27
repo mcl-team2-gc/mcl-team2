@@ -1,6 +1,26 @@
 // common.js - helpers shared by every page (header, clock, errors, passcodes).
 (function () {
   var MCL = window.MCL = {};
+  // Dark / light theme: "auto" follows the phone setting.
+  function applyTheme() {
+    var th = null; try { th = localStorage.getItem("mclTheme"); } catch (e) {}
+    if (th === "dark" || th === "light") document.documentElement.setAttribute("data-theme", th);
+    else document.documentElement.removeAttribute("data-theme");
+  }
+  applyTheme();
+  MCL.isDark = function () {
+    var a = document.documentElement.getAttribute("data-theme");
+    return a ? a === "dark" : !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+  };
+  MCL.toggleTheme = function () {
+    try { localStorage.setItem("mclTheme", MCL.isDark() ? "light" : "dark"); } catch (e) {}
+    applyTheme(); MCL.renderHeader(MCL._active, MCL._setting);
+    window.dispatchEvent(new Event("mcl-theme"));
+  };
+  // Install as an app + work with weak signal (only on the live https site).
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });
+  }
   var TABLE = "mine_records";
   MCL.TABLE = TABLE;
 
@@ -214,17 +234,25 @@
   MCL.renderHeader = function (active, setting) {
     MCL._active = active; MCL._setting = setting;
     var n = MCL.mineNow(setting), host = document.getElementById("app-header");
-    function link(href, key, text, ic) { return '<a href="' + href + '"' + (active === key ? ' class="on" aria-current="page"' : "") + ">" + MCL.icon(ic) + "<span>" + text + "</span></a>"; }
+    function link(href, key, text, ic) { return '<a href="' + href + '"' + (active === key ? ' class="on" aria-current="page"' : "") + ">" + MCL.icon(ic) + "<span>" + MCL.t(text) + "</span></a>"; }
+    var L = MCL.lang();
+    var tools = '<div class="hd-tools"><select id="langSel" aria-label="Language">' +
+      [["en", "EN"], ["hi", "हिंदी"], ["or", "ଓଡ଼ିଆ"]].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === L ? " selected" : "") + ">" + o[1] + "</option>"; }).join("") +
+      '</select><button type="button" id="themeBtn" class="iconbtn" aria-label="Dark or light mode">' + MCL.icon(MCL.isDark() ? "sun" : "moon") + "</button></div>";
     host.className = "top";
     host.innerHTML = MCL.art("hd-art") + '<div class="hd-in">' +
-      '<div class="brand"><span class="logo">' + LOGO + '</span><div><div class="sub">Mine Monitor</div><h1>' + MCL.esc(n.name) + "</h1></div></div>" +
+      '<div class="brand"><span class="logo">' + LOGO + '</span><div class="brand-txt"><div class="sub">Mine Monitor</div><h1>' + MCL.esc(n.name) + "</h1></div>" + tools + "</div>" +
       '<div class="chips">' +
         '<span class="chip">' + MCL.icon("calendar") + MCL.esc(MCL.prettyDate(n.date)) + "</span>" +
-        '<span class="chip"><span class="dot' + (n.live ? "" : " off") + '"></span><b>' + MCL.esc(n.time) + "</b>" + (n.live ? "" : " (set by hand)") + "</span>" +
-        '<span class="chip">' + MCL.icon("clock") + 'Shift <b>' + n.shift + "</b>&nbsp;" + SHIFT_HOURS[n.shift] + "</span>" +
+        '<span class="chip"><span class="dot' + (n.live ? "" : " off") + '"></span><b>' + MCL.esc(n.time) + "</b>" + (n.live ? "" : " (" + MCL.t("set by hand") + ")") + "</span>" +
+        '<span class="chip">' + MCL.icon("clock") + MCL.t("Shift") + ' <b>' + n.shift + "</b>&nbsp;" + SHIFT_HOURS[n.shift] + "</span>" +
         '<span class="chip">' + MCL.icon("globe") + MCL.esc(n.tz) + "</span>" +
       "</div>" +
       '<nav class="menu">' + link("dashboard.html", "dash", "Dashboard", "grid") + link("metrics.html", "metrics", "Metrics", "chart") + link("index.html", "entry", "Data entry", "edit") + "</nav></div>";
+    var ls = document.getElementById("langSel"), tb = document.getElementById("themeBtn");
+    if (ls) ls.onchange = function () { MCL.store("mclLang", ls.value); location.reload(); };
+    if (tb) tb.onclick = MCL.toggleTheme;
+    document.documentElement.lang = L === "en" ? "en" : L;
     if (!MCL._tick) {   // keep the clock moving (only while the page is on screen)
       MCL._tick = setInterval(function () { if (!document.hidden) MCL.renderHeader(MCL._active, MCL._setting); }, 30000);
     }

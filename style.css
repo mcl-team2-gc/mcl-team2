@@ -217,3 +217,61 @@ body.tv main{max-width:1600px}
 body.tv .kpi b{font-size:2.2rem}
 @media(min-width:1200px){body.tv .grid.two{grid-template-columns:1fr 1fr}}
 .tv-exit{position:fixed;right:12px;bottom:12px;z-index:20;background:rgba(15,23,42,.75);color:#fff;padding:8px 14px;border-radius:999px;text-decoration:none;font-size:.85rem}
+
+/* ---------- colours that change in dark mode ---------- */
+:root{--input:#fff;--track:#eef0f3;--now:#fffbeb}
+input,select,textarea{background:var(--input)}
+button.alt,.tabs button{background:var(--card)}
+.bar{background:var(--track)}
+.now-row td{background:var(--now)}
+.kpi b{color:var(--ink)}
+.empty .ic{color:var(--mute)}
+
+/* dark mode: follows the phone unless the person picked light or dark */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){--bg:#0b1120; --card:#111827; --ink:#e5e7eb; --ink2:#cbd5e1; --mute:#94a3b8; --line:#1f2937;
+    --brand-soft:#3a2706; --ok-soft:#052e1c; --warn-soft:#3a2706; --bad-soft:#3f1010; --info-soft:#0f2547; --grey-soft:#1e293b;
+    --ok:#4ade80; --bad:#f87171; --info:#60a5fa; --brand-d:#fbbf24;
+    --input:#0f172a; --track:#1f2937; --now:#2a2208; --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 20px rgba(0,0,0,.35);
+    color-scheme:dark;}
+  :root:not([data-theme="light"]) .msg.err{color:#fecaca;border-color:#7f1d1d}
+  :root:not([data-theme="light"]) .msg.ok{color:#bbf7d0;border-color:#14532d}
+  :root:not([data-theme="light"]) .msg.info{color:#fde68a;border-color:#78350f}
+  :root:not([data-theme="light"]) .badge.Medium{color:#fcd34d}
+  :root:not([data-theme="light"]) .badge{color:#cbd5e1}
+  :root:not([data-theme="light"]) .instr{background:linear-gradient(90deg,#2a1608,var(--card))}
+  :root:not([data-theme="light"]) .alert.blast{background:#2a1608;border-color:#9a3412;color:#fed7aa}
+  :root:not([data-theme="light"]) .alert.urgent{background:#3f1010;border-color:#991b1b;color:#fecaca}
+  :root:not([data-theme="light"]) .item.escalate{background:linear-gradient(90deg,#3f1010,transparent)}
+  :root:not([data-theme="light"]) .login-art{background:linear-gradient(180deg,#0f2547,#1e293b)}
+  :root:not([data-theme="light"]) .userbar .avatar{color:#1f2937}
+  :root:not([data-theme="light"]) .tabs button.on{background:var(--brand);border-color:var(--brand)}}
+:root[data-theme="dark"]{--bg:#0b1120; --card:#111827; --ink:#e5e7eb; --ink2:#cbd5e1; --mute:#94a3b8; --line:#1f2937;
+    --brand-soft:#3a2706; --ok-soft:#052e1c; --warn-soft:#3a2706; --bad-soft:#3f1010; --info-soft:#0f2547; --grey-soft:#1e293b;
+    --ok:#4ade80; --bad:#f87171; --info:#60a5fa; --brand-d:#fbbf24;
+    --input:#0f172a; --track:#1f2937; --now:#2a2208; --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 20px rgba(0,0,0,.35);
+    color-scheme:dark;}
+  :root[data-theme="dark"] .msg.err{color:#fecaca;border-color:#7f1d1d}
+  :root[data-theme="dark"] .msg.ok{color:#bbf7d0;border-color:#14532d}
+  :root[data-theme="dark"] .msg.info{color:#fde68a;border-color:#78350f}
+  :root[data-theme="dark"] .badge.Medium{color:#fcd34d}
+  :root[data-theme="dark"] .badge{color:#cbd5e1}
+  :root[data-theme="dark"] .instr{background:linear-gradient(90deg,#2a1608,var(--card))}
+  :root[data-theme="dark"] .alert.blast{background:#2a1608;border-color:#9a3412;color:#fed7aa}
+  :root[data-theme="dark"] .alert.urgent{background:#3f1010;border-color:#991b1b;color:#fecaca}
+  :root[data-theme="dark"] .item.escalate{background:linear-gradient(90deg,#3f1010,transparent)}
+  :root[data-theme="dark"] .login-art{background:linear-gradient(180deg,#0f2547,#1e293b)}
+  :root[data-theme="dark"] .userbar .avatar{color:#1f2937}
+  :root[data-theme="dark"] .tabs button.on{background:var(--brand);border-color:var(--brand)}
+
+/* header tools: language + dark mode button */
+.brand-txt{flex:1;min-width:0}
+.brand h1{overflow:hidden;text-overflow:ellipsis}
+.hd-tools{display:flex;gap:6px;align-items:center;flex:none}
+.hd-tools select{width:auto;padding:6px 8px;min-height:36px;font-size:.82rem;background:rgba(255,255,255,.08);color:#e2e8f0;border:1px solid rgba(255,255,255,.18);border-radius:10px}
+.hd-tools select option{color:#0f172a}
+button.iconbtn{width:38px;min-height:36px;height:36px;margin:0;padding:0;display:grid;place-items:center;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);box-shadow:none;border-radius:10px;color:#fbbf24}
+button.iconbtn .ic{margin:0;vertical-align:0}
+
+:root[data-theme="dark"] .hic.dark{background:#334155;color:#e2e8f0}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .hic.dark{background:#334155;color:#e2e8f0}}

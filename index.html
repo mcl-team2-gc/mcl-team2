@@ -556,7 +556,8 @@ async function loadList(m) {
     $("list").innerHTML = r.data.map(function (x) {
       var s = '<div class="item">' + esc(m.line(x)) + '<div class="muted small">' + esc(MCL.timeText(x.created_at)) + (x.entered_by ? " &middot; " + esc(String(x.entered_by).split(":").pop()) : "") + "</div>";
       if (m.flow) {
-        s += '<span class="badge ' + esc(x.urgency) + '">' + esc(t(x.urgency)) + '</span> <span class="badge st">' + esc(t((STAT_LABELS[m.id] || {})[x.status] || x.status)) + "</span><br>";
+        if ((m._f || m.fields).some(function (f) { return f.k === "urgency"; })) s += '<span class="badge ' + esc(x.urgency) + '">' + esc(t(x.urgency)) + "</span> ";
+        s += '<span class="badge st">' + esc(t((STAT_LABELS[m.id] || {})[x.status] || x.status)) + "</span><br>";
         Object.keys(STAT_LABELS[m.id] || {}).forEach(function (st) {
           if (st !== x.status) s += '<button class="small alt" data-id="' + x.id + '" data-st="' + st + '">' + t("Mark:") + " " + esc(t(STAT_LABELS[m.id][st])) + "</button>";
         });

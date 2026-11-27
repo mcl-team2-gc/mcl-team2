@@ -85,11 +85,22 @@
 
 ## Our tool (filled in during Phase 1)
 - Team: MCL team 2 (IIM Sambalpur MDP)
-- Tool name: Mine Monitor (operational status of a coal mine)
+- Tool name: Mine Monitor (operational status of an opencast coal mine)
 - Problem: Management cannot see faces, machines, targets, production, hindrances in one place.
-- Who records / who decides: roles with passcodes: Admin, General Manager, Project Officer, Mine Manager, Production Incharge, Shift Incharge, Overman. GM/PO/MM give targets and instructions.
-- Table name and columns: mine_records (id, created_at, record_type, category, title, location, urgency, status, shift, record_date, record_time, qty, qty2, details, entered_by). record_type = setting / target / face / assign / deploy / machine / fleet / breakdown / trip / production / hindrance / instruction / user.
-- Pages: index.html = entry page (passcode sign-in + data modules); dashboard.html = dashboard; metrics.html = charts. Shared files: style.css, common.js.
+- Who records / who decides: staff sign in with e-mail + password. Roles: Admin, General Manager (gm),
+  Project Officer (po), Mine Manager (mm), Production Incharge (pi), Shift Incharge (shift), Overman.
+  GM/PO/MM give targets and instructions; PI plans faces, shift plans and blasts; Shift Incharge
+  deploys fleet, assigns Overmen, posts production and handover; Overman reports fleet status,
+  breakdowns, HEMM logbook, trips, water spraying. Everyone can report hindrances and safety.
+- Table name and columns: mine_records (id, created_at, record_type, category, title, location,
+  urgency, status, shift, record_date, record_time, qty, qty2, details, entered_by).
+  record_type = setting / staff / asset / target / face / plan / blast / assign / deploy / machine /
+  fleet / breakdown / hemm / trip / production / hindrance / safety / spray / handover / instruction / log.
+  "log" rows are the audit trail (title = id of the changed row). Old "user" rows are unused.
+- Pages: index.html = entry page (sign-in + modules); dashboard.html = dashboard (also ?date=,
+  ?report=1 daily report, ?tv=1 TV mode); metrics.html = charts. Shared: style.css, common.js,
+  i18n.js, manifest.json, sw.js, icon.svg, icon-192.png, icon-512.png.
+- Units: Coal in tonnes, OB in cu.m (shown as Million when 1,000,000 or more).
 
 ## Progress Log (newest entry at the bottom)
 - Phase 0 (starter): placeholder index.html, config.js without settings and
@@ -102,3 +113,20 @@
 - Phase 3c (Claude): Units. Coal shows in Tonnes or Million Tonnes, OB in cu.m or Million cu.m (picked automatically; 1,000,000 or more shows as Million). Target and Production forms have a "Unit of the quantity" box (plain or Million); numbers are still stored in tonnes / cu.m. Works: checked offline, not tested live. No SQL change.
 - Phase 4 (Claude): New modern look (style.css rewritten): dark sticky header with live-clock dot and shift chips, pill menu, cards with shadows, coloured KPI tiles, soft badges, two-column forms on wide screens. Dashboard rewritten: summary strip of 8 KPI tiles at top, cleaner production cards, one "Deployment by shift" table (overmen + machines + available), "Refresh now" button and "Updated hh:mm". Faster: dashboard uses 4 database requests instead of 12, metrics 5 instead of 8, only needed columns are read, and pages stop refreshing while hidden in the background. Save button shows "Saving..." to stop double entries. Works: checked offline with a fake database and phone-size screenshots; not tested live. No SQL change.
 - Phase 4b (Claude): Icons and graphics. common.js now has MCL.icon(name) (26 line icons drawn in the page, no download) and MCL.art() (opencast mine picture: benches, coal seam, dumper, shovel). Used in: menu, header chips, KPI tiles, card headings, data entry tabs, empty states, sign-in card picture, faint mine picture in the header. Dashboard has a new orange banner: greeting, running shift, time left with a bar, running machines / active faces / breakdowns. Works: checked offline with phone screenshots; not tested live. No SQL change.
+- Phase 5 (Claude): ALL improvements from the ideas list. (1) Real security: e-mail + password sign-in
+  (Supabase Auth), Staff list module, role checks inside the database (mine_can), anon can only read.
+  (2) New modules: My instructions (Seen/Done), Machine list (pick lists), Shift plan per face, Blasting
+  schedule, HEMM logbook (hours + diesel), Water spraying, Shift handover, Safety observations, Audit
+  trail; quick "+1/+5/+10 trip" buttons; Edit your own entries; entries made offline are kept on the
+  phone and sent later. (3) Dashboard: blasting and "urgent > 2 h" alerts, handover card, 12 KPI tiles,
+  required run rate + month/year-end forecast, plan vs actual by face, availability/utilisation,
+  weather (Open-Meteo), water-spraying status, safety card, "Seen by" on instructions, view any past
+  date, Daily report (print/PDF), Share (WhatsApp), TV mode. (4) Metrics: month-by-month vs target,
+  stripping ratio, availability/utilisation by type, diesel per day and per tonne, hours lost per week,
+  breakdown report with average repair time, face history. (5) Dark mode button, language switch
+  (English / Hindi / Odia - words in i18n.js, need checking by a native speaker), install as an app
+  (manifest + sw.js). Works: checked offline with a fake database and real Chart.js, phone-size
+  screenshots, no page errors; NOT tested live. Known problems: data entry needs the new
+  01-setup.sql run again AND Supabase users created for each staff e-mail; hints in forms stay in
+  English; weather needs latitude/longitude in Mine settings. Next: Data Keeper runs 01-setup.sql,
+  creates the 8 sample users (or your own made-up ones) in Supabase Authentication, team tests each role.
