@@ -21,7 +21,7 @@
 var T = MCL.TABLE, esc = MCL.esc, num = MCL.num;
 var $ = function (id) { return document.getElementById(id); };
 var db = null;
-var UNIT = { Coal: "tonnes", OB: "cu.m" };
+var UNIT = { Coal: "Tonnes / Million Tonnes", OB: "cu.m / Million cu.m" };
 var FACE_ST = { "Open": "Planned", "In progress": "Active" };
 var HIND_ST = { "Open": "Open", "In progress": "Being solved" };
 var INS_ST = { "Open": "New", "In progress": "Being acted on" };
@@ -92,20 +92,20 @@ async function load() {
         Monthly: sum(mp.filter(function (r) { return r.record_date >= month; }), "qty"),
         Annual: sum(mp, "qty")
       };
-      var est = estimate(mat, now, prod, trips);
+      var est = estimate(mat, now, prod, trips), q = function (n) { return MCL.fmtQty(n, mat); };
       h += '<div class="card"><h2>' + (mat === "Coal" ? "Coal production" : "OB removal") + ' <span class="muted">(' + UNIT[mat] + ")</span></h2>";
       ["Daily", "Monthly", "Annual"].forEach(function (p) {
         var t = targets.filter(function (r) { return r.category === p && r.title === mat; })[0];
         var tv = t ? Number(t.qty) : 0;
-        h += "<h3>" + p + "</h3><div>Actual " + num(act[p]) + " / Target " + (t ? num(tv) : "not set") +
+        h += "<h3>" + p + "</h3><div>Actual " + q(act[p]) + " / Target " + (t ? q(tv) : "not set") +
              (t ? " &middot; <b>" + num(pct(act[p], tv), 1) + "%</b>" : "") + "</div>" + bar(pct(act[p], tv));
       });
       var dayEst = act.Daily + est.value, dt = targets.filter(function (r) { return r.category === "Daily" && r.title === mat; })[0];
-      h += '<h3>Running shift ' + now.shift + ' - estimate</h3><div><b>' + num(est.value) + "</b> expected by shift end</div>" +
+      h += '<h3>Running shift ' + now.shift + ' - estimate</h3><div><b>' + q(est.value) + "</b> expected by shift end</div>" +
            bar(dt ? pct(dayEst, Number(dt.qty)) : 0, true) +
-           '<div class="muted">Day total with estimate: ' + num(dayEst) + (dt ? " of " + num(Number(dt.qty)) : "") + ".<br>" +
-           "How: trips so far (" + num(est.tripsT) + ") + hours left x a rate. The rate mixes today's trip speed with the average of the last " + est.n +
-           " shifts (" + num(est.avgShift) + " per shift); today's trips count more as the shift goes on.</div></div>";
+           '<div class="muted">Day total with estimate: ' + q(dayEst) + (dt ? " of " + q(Number(dt.qty)) : "") + ".<br>" +
+           "How: trips so far (" + q(est.tripsT) + ") + hours left x a rate. The rate mixes today's trip speed with the average of the last " + est.n +
+           " shifts (" + q(est.avgShift) + " per shift); today's trips count more as the shift goes on.</div></div>";
     });
     h += "</div>";
 

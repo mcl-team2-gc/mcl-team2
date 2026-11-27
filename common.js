@@ -13,6 +13,12 @@
     n = Number(n); if (!isFinite(n)) n = 0;
     return n.toLocaleString("en-IN", { maximumFractionDigits: d == null ? 0 : d });
   };
+  // Coal is measured in Tonnes / Million Tonnes, OB in cu.m / Million cu.m. Stored in the base unit.
+  MCL.UNITS = { Coal: { base: "tonnes", mil: "Million Tonnes" }, OB: { base: "cu.m", mil: "Million cu.m" } };
+  MCL.fmtQty = function (n, mat) {
+    var u = MCL.UNITS[mat] || MCL.UNITS.Coal; n = Number(n); if (!isFinite(n)) n = 0;
+    return Math.abs(n) >= 1000000 ? MCL.num(n / 1000000, 2) + " " + u.mil : MCL.num(n) + " " + u.base;
+  };
   MCL.errText = function (e) {
     if (!e) return "";
     var t = e.message || String(e);

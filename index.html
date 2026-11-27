@@ -76,11 +76,12 @@ var MODULES = [
     line: function (r) { return r.title + " | " + (r.category || MCL.DEFAULT_TZ) + " | " + (r.details === "manual" ? "by hand " + (r.record_date || "") + " " + (r.record_time || "") : "system clock"); } },
 
   { id: "target", label: "Targets", roles: ["po", "mm"], hint:
-    "Newest entry for each Period + Material is used. Coal is in tonnes, OB in cubic metres.",
+    "Newest entry for each Period + Material is used. Coal is in Tonnes (or Million Tonnes), OB in cu.m (or Million cu.m). Pick the unit first.",
     fields: [ { k: "category", l: "Period", t: "select", o: [["Annual","Annual"],["Monthly","Monthly"],["Daily","Daily"]] },
               { k: "title", l: "Material", t: "select", o: MAT },
-              { k: "qty", l: "Target quantity", t: "number", req: 1 } ],
-    line: function (r) { return r.category + " " + r.title + " target: " + MCL.num(r.qty); } },
+              { k: "_unit", l: "Unit of the quantity", t: "select", virtual: 1, o: [["1","Tonnes (Coal) / cu.m (OB)"],["1000000","Million Tonnes (Coal) / Million cu.m (OB)"]], d: "1" },
+              { k: "qty", l: "Target quantity", t: "number", req: 1, scaled: 1 } ],
+    line: function (r) { return r.category + " " + r.title + " target: " + MCL.fmtQty(r.qty, r.title); } },
 
   { id: "instruction", label: "Instructions", roles: ["po", "mm"], hint:
     "Instructions to your team. They show at the top of the dashboard until marked Done.",
@@ -158,12 +159,13 @@ var MODULES = [
     line: function (r) { return r.record_date + " " + r.shift + ": " + r.title + " " + r.qty + " trips x " + r.qty2; } },
 
   { id: "production", label: "Production status", roles: ["shift"], hint:
-    "Enter the final figure of a COMPLETED shift only. One entry per shift per material. Coal in tonnes, OB in cu.m.",
+    "Enter the final figure of a COMPLETED shift only. One entry per shift per material. Coal in Tonnes (or Million Tonnes), OB in cu.m (or Million cu.m). Pick the unit first.",
     fields: [ { k: "record_date", l: "Date (night shift after midnight = previous date)", t: "date", today: 1, req: 1 },
               { k: "shift", l: "Shift", t: "select", o: SHIFTS },
               { k: "title", l: "Material", t: "select", o: MAT },
-              { k: "qty", l: "Actual production", t: "number", req: 1 } ],
-    line: function (r) { return r.record_date + " Shift " + r.shift + ": " + r.title + " " + MCL.num(r.qty); } },
+              { k: "_unit", l: "Unit of the quantity", t: "select", virtual: 1, o: [["1","Tonnes (Coal) / cu.m (OB)"],["1000000","Million Tonnes (Coal) / Million cu.m (OB)"]], d: "1" },
+              { k: "qty", l: "Actual production", t: "number", req: 1, scaled: 1 } ],
+    line: function (r) { return r.record_date + " Shift " + r.shift + ": " + r.title + " " + MCL.fmtQty(r.qty, r.title); } },
 
   { id: "hindrance", label: "Hindrances", roles: ["pi", "shift", "overman", "po", "mm"], hint:
     "Overman: pick one of your assigned faces. Anything stopping or slowing production. Update the status when it is being solved or is solved.",
@@ -286,13 +288,15 @@ async function openModule(m) {
 async function save(m) {
   var row = { record_type: m.id, entered_by: role === "overman" ? "overman:" + uname : role };
   if (m.auto) { var n = MCL.mineNow(SETTING); row.record_date = n.shiftDate; row.shift = n.shift; }   // date and shift filled automatically
-  var F = m._f || m.fields;
+  var F = m._f || m.fields, mult = 1;
   for (var i = 0; i < F.length; i++) {
     var f = F[i], v = $("f_" + f.k).value.trim();
     if (f.req && !v) { MCL.showMsg($("fmsg"), "err", "Please fill: " + f.l); return; }
+    if (f.virtual) { mult = Number(v) || 1; continue; }
     if (v === "") continue;
     row[f.k] = f.t === "number" ? Number(v) : v;
   }
+  F.forEach(function (f) { if (f.scaled && row[f.k] != null) row[f.k] = Math.round(row[f.k] * mult * 1000) / 1000; });
   try {
     var r = await db.from(T).insert(row);
     if (r.error) throw r.error;

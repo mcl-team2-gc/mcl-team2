@@ -19,7 +19,7 @@
   <div id="status"></div>
   <div class="kpis" id="kpis"></div>
   <div class="grid two">
-    <div class="card"><h2>Coal - last 14 days (tonnes)</h2><div class="chartbox"><canvas id="cCoal" role="img" aria-label="Daily coal production bar chart"></canvas></div></div>
+    <div class="card"><h2>Coal - last 14 days (Tonnes)</h2><div class="chartbox"><canvas id="cCoal" role="img" aria-label="Daily coal production bar chart"></canvas></div></div>
     <div class="card"><h2>OB - last 14 days (cu.m)</h2><div class="chartbox"><canvas id="cOb" role="img" aria-label="Daily OB removal bar chart"></canvas></div></div>
     <div class="card"><h2>Which shift produces more? (last 7 days, % share)</h2><div class="chartbox"><canvas id="cShift" role="img" aria-label="Shift share chart"></canvas></div></div>
     <div class="card"><h2>Fleet deployed today, by machine type</h2><div class="chartbox"><canvas id="cFleet" role="img" aria-label="Fleet deployment chart"></canvas></div></div>
@@ -77,7 +77,7 @@ async function load() {
     ["Coal", "OB"].forEach(function (m) {
       var act = sumBy(prod.filter(function (r) { return r.title === m && r.record_date >= month; }), "qty");
       var t = latest(targets, "Monthly", m);
-      k += kpi(m + " this month", t ? num(act / Number(t.qty) * 100, 1) + "%" : num(act), t ? num(act) + " of " + num(Number(t.qty)) : "no monthly target set");
+      k += kpi(m + " this month", t ? num(act / Number(t.qty) * 100, 1) + "%" : MCL.fmtQty(act, m), t ? MCL.fmtQty(act, m) + " of " + MCL.fmtQty(Number(t.qty), m) : "no monthly target set");
     });
     var openH = hind.filter(function (r) { return r.status !== "Resolved"; });
     k += kpi("Open hindrances", num(openH.length), num(sumBy(openH, "qty"), 1) + " hours lost so far");
@@ -95,7 +95,7 @@ async function load() {
       var ds = [{ type: "bar", label: "Actual", backgroundColor: COL[m],
         data: days.map(function (d) { return sumBy(prod.filter(function (r) { return r.title === m && r.record_date === d; }), "qty"); }) }];
       if (tv) ds.push({ type: "line", label: "Daily target", borderColor: COL.target, backgroundColor: COL.target, pointRadius: 0, borderDash: [6, 4], data: days.map(function () { return tv; }) });
-      mk(p[1], { data: { labels: days.map(function (d) { return d.slice(8) + "/" + d.slice(5, 7); }), datasets: ds } });
+      mk(p[1], { data: { labels: days.map(function (d) { return d.slice(8) + "/" + d.slice(5, 7); }), datasets: ds }, options: { scales: { y: { beginAtZero: true, title: { display: true, text: MCL.UNITS[m].base } } } } });
     });
 
     // Share of production by shift, last 7 days
